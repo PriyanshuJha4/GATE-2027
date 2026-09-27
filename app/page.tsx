@@ -6,12 +6,19 @@ import { useUser } from "@/components/UserContext";
 export default function DashboardPage() {
   const { currentUser } = useUser();
 
+  // UserProfile type me jo bhi name property ho use safely extract karein
+  const displayName =
+    (currentUser as any)?.name ||
+    (currentUser as any)?.full_name ||
+    (currentUser as any)?.username ||
+    "Aspirant";
+
   return (
     <div className="space-y-6 pb-12">
       {/* Welcome Banner */}
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <h1 className="text-2xl font-bold text-slate-800">
-          Welcome back, {currentUser?.username || "Aspirant"}! 👋
+          Welcome back, {displayName}! 👋
         </h1>
         <p className="text-sm text-slate-500 mt-1">
           GATE 2027 Dashboard - Track your syllabus progress, weightage, and mock tests here.
