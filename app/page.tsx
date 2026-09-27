@@ -12,14 +12,20 @@ export default function SyllabusPage() {
 
   // 1. Database se load karein
   useEffect(() => {
-    if (!currentUser) return;
+    // Agar user logged in nahi hai to loading band karke return karein
+    if (!currentUser) {
+      setLoading(false);
+      return;
+    }
+
+    const userId = currentUser.id;
 
     async function loadSyllabus() {
       setLoading(true);
       const { data } = await supabase
         .from("syllabus_progress")
         .select("topic_key")
-        .eq("user_id", currentUser.id)
+        .eq("user_id", userId)
         .eq("completed", true);
 
       if (data) {
@@ -35,6 +41,7 @@ export default function SyllabusPage() {
   const toggleTopic = async (topicKey: string) => {
     if (!currentUser) return;
 
+    const userId = currentUser.id;
     const isCurrentlyChecked = completedTopics.includes(topicKey);
     const newStatus = !isCurrentlyChecked;
 
@@ -45,7 +52,7 @@ export default function SyllabusPage() {
 
     await supabase.from("syllabus_progress").upsert(
       {
-        user_id: currentUser.id,
+        user_id: userId,
         topic_key: topicKey,
         completed: newStatus,
         updated_at: new Date().toISOString(),
