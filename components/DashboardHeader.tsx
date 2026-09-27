@@ -1,59 +1,77 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import LiveClock from "./LiveClock";
 import { daysRemaining, formatCountdownLabel } from "@/lib/countdown";
 import { useUser } from "./UserContext";
 import { supabase } from "@/lib/supabaseClient";
-import { WeeklyProgress, MockTest } from "@/lib/types";
+import { MockTest } from "@/lib/types";
+import { GATE_SYLLABUS } from "@/lib/syllabus";
 
-const TOTAL_WEEKS = 19;
-const TOTAL_TASKS_PER_WEEK = 6;
-
-// Fallback date agar import issue ho
 const SYLLABUS_DEADLINE_DATE = "2026-11-30";
 
 export default function DashboardHeader() {
   const { currentUser } = useUser();
-  const [progressRows, setProgressRows] = useState<WeeklyProgress[]>([]);
   const [mockTests, setMockTests] = useState<MockTest[]>([]);
+  const [completedCount, setCompletedCount] = useState<number>(0);
 
-  useEffect(() => {
-    if (!currentUser) return;
+  // Total topics direct syllabus structure se count honge
+  const totalTopics = GATE_SYLLABUS.reduce(
+    (acc, curr) => acc + curr.topics.length,
+    0
+  );
 
-    (async () => {
-      const { data: progress } = await supabase
-        .from("weekly_progress")
-        .select("*")
-        .eq("user_id", currentUser.id);
+  // Supabase se syllabus completed count laane ka function
+  const fetchSyllabusProgress = useCallback(async () => {
+    if (!currentUser) {
+      setCompletedCount(0);
+      return;
+    }
 
-      const { data: tests } = await supabase
-        .from("mock_tests")
-        .select("*")
-        .eq("user_id", currentUser.id)
-        .order("test_date", { ascending: false });
+    const { data, error } = await supabase
+      .from("syllabus_progress")
+      .select("topic_key")
+      .eq("user_id", currentUser.id)
+      .eq("completed", true);
 
-      if (progress) setProgressRows(progress as WeeklyProgress[]);
-      if (tests) setMockTests(tests as MockTest[]);
-    })();
+    if (!error && data) {
+      setCompletedCount(data.length);
+    }
   }, [currentUser]);
 
-  const totalPossibleTasks = TOTAL_WEEKS * TOTAL_TASKS_PER_WEEK;
-  const completedTasks = progressRows.reduce((sum, row) => {
-    return (
-      sum +
-      Number(row.class_notes) +
-      Number(row.dpp_questions) +
-      Number(row.pyqs) +
-      Number(row.mock_test) +
-      Number(row.error_log) +
-      Number(row.short_notes)
-    );
-  }, 0);
+  // Mock tests data laane ka function
+  const fetchMockTests = useCallback(async () => {
+    if (!currentUser) return;
 
-  const syllabusPct = totalPossibleTasks
-    ? Math.round((completedTasks / totalPossibleTasks) * 100)
-    : 0;
+    const { data: tests } = await supabase
+      .from("mock_tests")
+      .select("*")
+      .eq("user_id", currentUser.id)
+      .order("test_date", { ascending: false });
+
+    if (tests) setMockTests(tests as MockTest[]);
+  }, [currentUser]);
+
+  useEffect(() => {
+    fetchSyllabusProgress();
+    fetchMockTests();
+
+    // Jab user syllabus page par tick lagakar wapas dashboard par switch kare,
+    // toh data window focus hote hi automatic refresh ho jaye
+    const handleFocus = () => {
+      fetchSyllabusProgress();
+      fetchMockTests();
+    };
+
+    window.addEventListener("focus", handleFocus);
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, [fetchSyllabusProgress, fetchMockTests]);
+
+  // Pure syllabus topics ke basis par calculated percentage
+  const syllabusPct =
+    totalTopics > 0 ? Math.round((completedCount / totalTopics) * 100) : 0;
 
   const latestTest = mockTests.length > 0 ? mockTests[0] : null;
   const lastScorePct =
@@ -78,7 +96,10 @@ export default function DashboardHeader() {
           label="Days to Syllabus Deadline"
           value={formatCountdownLabel(daysRemaining(SYLLABUS_DEADLINE_DATE))}
         />
-        <Metric label="Syllabus Completion" value={`${syllabusPct}%`} />
+        <Metric
+          label="Syllabus Completion"
+          value={`${syllabusPct}% (${completedCount}/${totalTopics})`}
+        />
         <Metric
           label="Last Mock Test Score"
           value={
