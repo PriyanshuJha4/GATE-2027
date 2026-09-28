@@ -1,13 +1,15 @@
 "use client";
 
-import { useState, useEffect, useCallback, ChangeEvent, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { useUser, SUPER_ADMIN_EMAIL } from "@/components/UserContext";
 
 interface LibraryItem {
   id: string;
   name: string;
   type: "folder" | "file";
   parent_id: string | null;
+  user_id?: string | null;
   file_url: string | null;
   file_path: string | null;
   file_type: "pdf" | "video" | "image" | "note" | null;
@@ -17,8 +19,10 @@ interface LibraryItem {
 }
 
 export default function LibraryPage() {
+  const { currentUser, isImpersonating } = useUser();
+
   const [items, setItems] = useState<LibraryItem[]>([]);
-  const [allItems, setAllItems] = useState<LibraryItem[]>([]); // Full dataset for storage calculation
+  const [allItems, setAllItems] = useState<LibraryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [uploadProgressText, setUploadProgressText] = useState("");
@@ -43,19 +47,38 @@ export default function LibraryPage() {
   const [editingItem, setEditingItem] = useState<LibraryItem | null>(null);
   const [renameValue, setRenameValue] = useState("");
 
-  // 1. Fetch all items (used for calculating total storage used across all folders)
+  // Determine if acting as genuine super admin
+  const isRealAdmin = useMemo(() => {
+    return (
+      (currentUser?.role === "admin" || currentUser?.email === SUPER_ADMIN_EMAIL) &&
+      !isImpersonating
+    );
+  }, [currentUser, isImpersonating]);
+
+  // 1. Fetch all items for storage indicator calculation
   const fetchAllStorageUsage = useCallback(async () => {
-    const { data } = await supabase
+    let query = supabase
       .from("library_items")
-      .select("id, file_size, storage_provider, type");
+      .select("id, file_size, storage_provider, type, user_id");
+
+    if (!isRealAdmin) {
+      if (currentUser?.id) {
+        query = query.or(`user_id.is.null,user_id.eq.${currentUser.id}`);
+      } else {
+        query = query.is("user_id", null);
+      }
+    }
+
+    const { data } = await query;
     if (data) {
       setAllItems(data as LibraryItem[]);
     }
-  }, []);
+  }, [isRealAdmin, currentUser]);
 
-  // 2. Current level ke folder aur files load karna
+  // 2. Load folders and files for current level
   const fetchCurrentItems = useCallback(async () => {
     setLoading(true);
+
     let query = supabase
       .from("library_items")
       .select("*")
@@ -68,21 +91,30 @@ export default function LibraryPage() {
       query = query.is("parent_id", null);
     }
 
+    // Role-based visibility
+    if (!isRealAdmin) {
+      if (currentUser?.id) {
+        query = query.or(`user_id.is.null,user_id.eq.${currentUser.id}`);
+      } else {
+        query = query.is("user_id", null);
+      }
+    }
+
     const { data, error } = await query;
     if (error) {
       console.error("Error fetching library items:", error.message);
     } else if (data) {
-      setItems(data);
+      setItems(data as LibraryItem[]);
     }
     setLoading(false);
-  }, [currentFolder]);
+  }, [currentFolder, isRealAdmin, currentUser]);
 
   useEffect(() => {
     fetchCurrentItems();
     fetchAllStorageUsage();
   }, [fetchCurrentItems, fetchAllStorageUsage]);
 
-  // Total Storage Calculations (in MB)
+  // Storage consumption calculation
   const { supabaseUsedMB, cloudinaryUsedMB } = useMemo(() => {
     let sbBytes = 0;
     let cdBytes = 0;
@@ -104,7 +136,7 @@ export default function LibraryPage() {
   }, [allItems]);
 
   const SUPABASE_MAX_MB = 1024; // 1 GB
-  const CLOUDINARY_MAX_MB = 25600; // 25 GB (~25 Credits)
+  const CLOUDINARY_MAX_MB = 25600; // 25 GB
 
   const handleOpenFolder = (folder: LibraryItem) => {
     setFolderPath((prev) => [...prev, folder]);
@@ -122,7 +154,7 @@ export default function LibraryPage() {
     }
   };
 
-  // Create Folder
+  // Create Folder (Admin: Global | Student: Personal)
   const handleCreateFolder = async () => {
     if (!newFolderName.trim()) return;
 
@@ -132,6 +164,7 @@ export default function LibraryPage() {
         name: newFolderName.trim(),
         type: "folder",
         parent_id: currentFolder ? currentFolder.id : null,
+        user_id: isRealAdmin ? null : currentUser?.id || null,
       })
       .select()
       .single();
@@ -139,7 +172,7 @@ export default function LibraryPage() {
     if (error) {
       alert("Folder creation failed: " + error.message);
     } else if (data) {
-      setItems((prev) => [...prev, data]);
+      setItems((prev) => [...prev, data as LibraryItem]);
       setNewFolderName("");
       setShowCreateFolderModal(false);
     }
@@ -151,7 +184,7 @@ export default function LibraryPage() {
     const uploadPreset = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET;
 
     if (!cloudName || !uploadPreset) {
-      throw new Error("Cloudinary credentials missing hain! .env.local check karein.");
+      throw new Error("Cloudinary credentials missing! Check .env.local");
     }
 
     const formData = new FormData();
@@ -178,7 +211,7 @@ export default function LibraryPage() {
     };
   };
 
-  // Process File Upload (PDF, Video, Image)
+  // Upload File (Admin: Global | Student: Personal)
   const handleConfirmUpload = async () => {
     if (!selectedFile) return;
 
@@ -221,13 +254,13 @@ export default function LibraryPage() {
         fileUrl = urlData.publicUrl;
       }
 
-      // Save metadata in Supabase library_items
       const { data: dbData, error: dbError } = await supabase
         .from("library_items")
         .insert({
           name: selectedFile.name,
           type: "file",
           parent_id: currentFolder ? currentFolder.id : null,
+          user_id: isRealAdmin ? null : currentUser?.id || null,
           file_url: fileUrl,
           file_path: filePath,
           file_type: fileCategory,
@@ -240,8 +273,8 @@ export default function LibraryPage() {
       if (dbError) throw dbError;
 
       if (dbData) {
-        setItems((prev) => [...prev, dbData]);
-        setAllItems((prev) => [...prev, dbData]);
+        setItems((prev) => [...prev, dbData as LibraryItem]);
+        setAllItems((prev) => [...prev, dbData as LibraryItem]);
       }
 
       setSelectedFile(null);
@@ -254,7 +287,7 @@ export default function LibraryPage() {
     }
   };
 
-  // Add Link / Web Note
+  // Add Note Link (Admin: Global | Student: Personal)
   const handleAddNote = async () => {
     if (!noteTitle.trim() || !noteLink.trim()) return;
 
@@ -264,6 +297,7 @@ export default function LibraryPage() {
         name: noteTitle.trim(),
         type: "file",
         parent_id: currentFolder ? currentFolder.id : null,
+        user_id: isRealAdmin ? null : currentUser?.id || null,
         file_url: noteLink.trim(),
         file_type: "note",
         storage_provider: null,
@@ -272,16 +306,16 @@ export default function LibraryPage() {
       .single();
 
     if (error) {
-      alert("Note add karne me error: " + error.message);
+      alert("Note creation error: " + error.message);
     } else if (data) {
-      setItems((prev) => [...prev, data]);
+      setItems((prev) => [...prev, data as LibraryItem]);
       setNoteTitle("");
       setNoteLink("");
       setShowAddNoteModal(false);
     }
   };
 
-  // Rename
+  // Rename Item
   const handleRename = async () => {
     if (!editingItem || !renameValue.trim()) return;
 
@@ -303,12 +337,12 @@ export default function LibraryPage() {
     }
   };
 
-  // Delete
+  // Delete Item
   const handleDelete = async (item: LibraryItem) => {
     const isFolder = item.type === "folder";
     const confirmMsg = isFolder
-      ? `Kya aap "${item.name}" folder aur iske andar ka sabhi material delete karna chahte hain?`
-      : `Kya aap "${item.name}" delete karna chahte hain?`;
+      ? `Delete folder "${item.name}" and all contents inside?`
+      : `Delete file "${item.name}"?`;
 
     if (!confirm(confirmMsg)) return;
 
@@ -336,11 +370,20 @@ export default function LibraryPage() {
       {/* Top Header Card */}
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-800">
-            📚 GATE Preparation Library
-          </h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-bold text-slate-800">
+              📚 GATE Preparation Library
+            </h1>
+            {isRealAdmin && (
+              <span className="text-[10px] font-extrabold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full border border-amber-300">
+                ADMIN (Global Creator)
+              </span>
+            )}
+          </div>
           <p className="text-sm text-slate-500 mt-1">
-            Store PDFs, images, video lectures, and revision notes across Supabase & Cloudinary.
+            {isRealAdmin
+              ? "Any resource or folder you add here will be visible to all aspirants globally."
+              : "Store PDFs, images, videos, and notes. Items added here remain private to your account."}
           </p>
         </div>
 
@@ -348,21 +391,21 @@ export default function LibraryPage() {
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => setShowCreateFolderModal(true)}
-            className="px-3.5 py-2 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors flex items-center gap-1.5"
+            className="px-3.5 py-2 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
           >
             📁 + New Folder
           </button>
 
           <button
             onClick={() => setShowAddNoteModal(true)}
-            className="px-3.5 py-2 text-xs font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg transition-colors flex items-center gap-1.5"
+            className="px-3.5 py-2 text-xs font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
           >
             📝 + Add Note Link
           </button>
 
           <button
             onClick={() => setShowUploadModal(true)}
-            className="px-3.5 py-2 text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors shadow-sm flex items-center gap-1.5"
+            className="px-3.5 py-2 text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors shadow-sm flex items-center gap-1.5 cursor-pointer"
           >
             ⬆️ Upload File (PDF/Img/Vid)
           </button>
@@ -421,7 +464,7 @@ export default function LibraryPage() {
             />
           </div>
           <p className="text-[11px] text-slate-400 mt-1.5">
-            {((cloudinaryUsedMB / CLOUDINARY_MAX_MB) * 100).toFixed(2)}% used • Free tier limit: 25 GB
+            {((cloudinaryUsedMB / CLOUDINARY_MAX_MB) * 100).toFixed(2)}% used • Free tier limit: 25 GB[cite: 17]
           </p>
         </div>
       </div>
@@ -430,7 +473,7 @@ export default function LibraryPage() {
       <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-xs font-medium text-slate-600 overflow-x-auto">
         <button
           onClick={() => handleNavigateBreadcrumb(-1)}
-          className={`hover:text-indigo-600 font-semibold ${
+          className={`hover:text-indigo-600 font-semibold cursor-pointer ${
             folderPath.length === 0 ? "text-indigo-600 font-bold" : ""
           }`}
         >
@@ -441,7 +484,7 @@ export default function LibraryPage() {
             <span>/</span>
             <button
               onClick={() => handleNavigateBreadcrumb(index)}
-              className={`hover:text-indigo-600 ${
+              className={`hover:text-indigo-600 cursor-pointer ${
                 index === folderPath.length - 1
                   ? "text-indigo-600 font-bold"
                   : ""
@@ -471,6 +514,7 @@ export default function LibraryPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
           {items.map((item) => {
             const isFolder = item.type === "folder";
+            const isGlobalItem = item.user_id === null;
 
             return (
               <div
@@ -500,6 +544,15 @@ export default function LibraryPage() {
                         : "🔗"}
                     </span>
                     <div className="flex items-center gap-1.5">
+                      {isGlobalItem ? (
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200">
+                          Global
+                        </span>
+                      ) : (
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider bg-slate-100 text-slate-600">
+                          Personal
+                        </span>
+                      )}
                       {item.storage_provider && (
                         <span
                           className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider ${
@@ -511,9 +564,6 @@ export default function LibraryPage() {
                           {item.storage_provider === "cloudinary" ? "Cloudinary" : "Supabase"}
                         </span>
                       )}
-                      <span className="text-[10px] uppercase font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-500">
-                        {isFolder ? "Folder" : item.file_type}
-                      </span>
                     </div>
                   </div>
 
@@ -524,7 +574,6 @@ export default function LibraryPage() {
                     {item.name}
                   </h3>
 
-                  {/* File Size details */}
                   {item.file_size ? (
                     <p className="text-[11px] text-slate-400">
                       {(item.file_size / (1024 * 1024)).toFixed(2)} MB
@@ -535,24 +584,29 @@ export default function LibraryPage() {
                 {/* Bottom Actions Bar */}
                 <div className="pt-3 mt-3 border-t border-slate-100 flex items-center justify-between text-xs">
                   <div className="flex items-center gap-1.5">
-                    <button
-                      onClick={() => {
-                        setEditingItem(item);
-                        setRenameValue(item.name);
-                      }}
-                      className="p-1 text-slate-400 hover:text-indigo-600 rounded"
-                      title="Rename"
-                    >
-                      ✏️
-                    </button>
+                    {/* Allow editing/deleting if admin OR owner of personal item */}
+                    {(isRealAdmin || item.user_id === currentUser?.id) && (
+                      <>
+                        <button
+                          onClick={() => {
+                            setEditingItem(item);
+                            setRenameValue(item.name);
+                          }}
+                          className="p-1 text-slate-400 hover:text-indigo-600 rounded cursor-pointer"
+                          title="Rename"
+                        >
+                          ✏️
+                        </button>
 
-                    <button
-                      onClick={() => handleDelete(item)}
-                      className="p-1 text-slate-400 hover:text-rose-600 rounded"
-                      title="Delete"
-                    >
-                      🗑️
-                    </button>
+                        <button
+                          onClick={() => handleDelete(item)}
+                          className="p-1 text-slate-400 hover:text-rose-600 rounded cursor-pointer"
+                          title="Delete"
+                        >
+                          🗑️
+                        </button>
+                      </>
+                    )}
                   </div>
 
                   {!isFolder && item.file_url && (
@@ -578,7 +632,7 @@ export default function LibraryPage() {
                   {isFolder && (
                     <button
                       onClick={() => handleOpenFolder(item)}
-                      className="text-indigo-600 hover:underline font-medium text-[11px]"
+                      className="text-indigo-600 hover:underline font-medium text-[11px] cursor-pointer"
                     >
                       Browse →
                     </button>
@@ -590,13 +644,20 @@ export default function LibraryPage() {
         </div>
       )}
 
-      {/* Modal: Upload File (Cloud Selection + PDF, Image, Video) */}
+      {/* Modal: Upload File */}
       {showUploadModal && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl space-y-4">
-            <h3 className="text-base font-bold text-slate-800">
-              Upload Study Resource
-            </h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-slate-800">
+                Upload Study Resource
+              </h3>
+              {isRealAdmin && (
+                <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                  Global Upload
+                </span>
+              )}
+            </div>
 
             {/* Storage Provider Selection */}
             <div className="space-y-2">
@@ -622,7 +683,7 @@ export default function LibraryPage() {
                     <span className="text-xs font-bold text-slate-800">Cloudinary</span>
                   </div>
                   <span className="text-[11px] text-slate-500 mt-1">
-                    25 GB Free • Best for Images, Videos & Large PDFs
+                    25 GB Free • Best for Images, Videos & Large PDFs[cite: 17]
                   </span>
                 </label>
 
@@ -650,7 +711,7 @@ export default function LibraryPage() {
               </div>
             </div>
 
-            {/* File Selector: PDF, Images, Videos */}
+            {/* File Selector */}
             <div className="space-y-1.5 pt-2">
               <label className="text-xs font-semibold text-slate-600 block">
                 Select File (PDF, Image, or Video):
@@ -676,14 +737,14 @@ export default function LibraryPage() {
                   setShowUploadModal(false);
                   setSelectedFile(null);
                 }}
-                className="px-3.5 py-1.5 text-xs text-slate-600 rounded-lg hover:bg-slate-100 disabled:opacity-50"
+                className="px-3.5 py-1.5 text-xs text-slate-600 rounded-lg hover:bg-slate-100 disabled:opacity-50 cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 disabled={!selectedFile || uploading}
                 onClick={handleConfirmUpload}
-                className="px-4 py-1.5 text-xs font-semibold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 shadow-sm"
+                className="px-4 py-1.5 text-xs font-semibold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 shadow-sm cursor-pointer"
               >
                 {uploading ? "Uploading..." : "Start Upload"}
               </button>
@@ -711,13 +772,13 @@ export default function LibraryPage() {
                   setShowCreateFolderModal(false);
                   setNewFolderName("");
                 }}
-                className="px-3.5 py-1.5 text-xs text-slate-600 rounded-lg hover:bg-slate-100"
+                className="px-3.5 py-1.5 text-xs text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 onClick={handleCreateFolder}
-                className="px-3.5 py-1.5 text-xs font-semibold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+                className="px-3.5 py-1.5 text-xs font-semibold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 cursor-pointer"
               >
                 Create
               </button>
@@ -752,13 +813,13 @@ export default function LibraryPage() {
                   setNoteTitle("");
                   setNoteLink("");
                 }}
-                className="px-3.5 py-1.5 text-xs text-slate-600 rounded-lg hover:bg-slate-100"
+                className="px-3.5 py-1.5 text-xs text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 onClick={handleAddNote}
-                className="px-3.5 py-1.5 text-xs font-semibold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+                className="px-3.5 py-1.5 text-xs font-semibold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 cursor-pointer"
               >
                 Save Note
               </button>
@@ -782,13 +843,13 @@ export default function LibraryPage() {
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setEditingItem(null)}
-                className="px-3.5 py-1.5 text-xs text-slate-600 rounded-lg hover:bg-slate-100"
+                className="px-3.5 py-1.5 text-xs text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 onClick={handleRename}
-                className="px-3.5 py-1.5 text-xs font-semibold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+                className="px-3.5 py-1.5 text-xs font-semibold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 cursor-pointer"
               >
                 Save
               </button>

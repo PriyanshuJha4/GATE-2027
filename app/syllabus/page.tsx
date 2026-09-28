@@ -45,6 +45,7 @@ export default function SyllabusPage() {
   }, [currentUser]);
 
   // 1. Fetch Topics from Database & Auto-Populate if empty
+  // 1. Fetch Topics from Database & Auto-Populate if empty (with Deduplication Guard)
   const fetchTopics = useCallback(async () => {
     setLoading(true);
     const { data, error } = await supabase
@@ -55,7 +56,19 @@ export default function SyllabusPage() {
     if (error) {
       console.error("Fetch topics error:", error.message);
     } else if (data && data.length > 0) {
-      setTopics(data);
+      // Duplicate topic hatane ke liye filter guard
+      const seen = new Set<string>();
+      const uniqueList: TopicItem[] = [];
+
+      data.forEach((item) => {
+        const uniqueKey = `${item.subject}:::${item.topic}`.trim().toLowerCase();
+        if (!seen.has(uniqueKey)) {
+          seen.add(uniqueKey);
+          uniqueList.push(item);
+        }
+      });
+
+      setTopics(uniqueList);
     } else {
       // Seed default syllabus if DB is empty
       const initialRows: { subject: string; topic: string }[] = [];

@@ -3,6 +3,7 @@ import type { Metadata, Viewport } from "next";
 import Sidebar from "@/components/Sidebar";
 import { UserProvider } from "@/components/UserContext";
 import PwaRegister from "@/components/PwaRegister";
+import ImpersonationBanner from "@/components/ImpersonationBanner";
 
 export const metadata: Metadata = {
   title: "GATE 2027 Dashboard",
@@ -38,6 +39,9 @@ export default function RootLayout({
         <UserProvider>
           {/* PWA Service Worker Registration */}
           <PwaRegister />
+
+          {/* Admin Impersonation Top Switcher Banner */}
+          <ImpersonationBanner />
 
           {/* Top Header bar with Hamburger Navigation */}
           <Sidebar />

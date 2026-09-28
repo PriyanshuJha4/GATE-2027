@@ -14,14 +14,17 @@ export const SUPER_ADMIN_EMAIL = "jhaprem1.10@gmail.com";
 
 interface UserContextValue {
   currentUser: UserProfile | null;
+  adminUser: UserProfile | null;
   users: UserProfile[];
   loading: boolean;
   isAdmin: boolean;
+  isImpersonating: boolean;
   selectUser: (user: UserProfile) => void;
+  switchBackToAdmin: () => void;
   addUser: (
     name: string,
     email: string,
-    role?: "admin" | "student"
+    assignedRole?: "admin" | "student"
   ) => Promise<{ success: boolean; error?: string }>;
   promoteToAdmin: (userId: string, newRole: "admin" | "student") => Promise<boolean>;
   deleteUser: (userId: string) => Promise<{ success: boolean; error?: string }>;
@@ -32,10 +35,12 @@ interface UserContextValue {
 const UserContext = createContext<UserContextValue | undefined>(undefined);
 
 const ACTIVE_USER_KEY = "gate-dashboard-active-user-id";
+const ADMIN_ORIGINAL_KEY = "gate-dashboard-admin-id";
 
 export function UserProvider({ children }: { children: ReactNode }) {
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const [adminUser, setAdminUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
   const refreshUsers = async (): Promise<UserProfile[]> => {
@@ -56,31 +61,61 @@ export function UserProvider({ children }: { children: ReactNode }) {
       setLoading(true);
       const fetchedUsers = await refreshUsers();
 
-      const savedId =
+      const savedActiveId =
         typeof window !== "undefined"
           ? window.localStorage.getItem(ACTIVE_USER_KEY)
           : null;
+      const savedAdminId =
+        typeof window !== "undefined"
+          ? window.localStorage.getItem(ADMIN_ORIGINAL_KEY)
+          : null;
 
-      if (savedId) {
-        const restored = fetchedUsers.find((u) => u.id === savedId);
-        if (restored) {
-          setCurrentUser(restored);
-        } else {
-          window.localStorage.removeItem(ACTIVE_USER_KEY);
-          setCurrentUser(null);
-        }
-      } else {
-        setCurrentUser(null);
+      if (savedAdminId) {
+        const foundAdmin = fetchedUsers.find((u) => u.id === savedAdminId);
+        if (foundAdmin) setAdminUser(foundAdmin);
       }
 
+      if (savedActiveId) {
+        const restored = fetchedUsers.find((u) => u.id === savedActiveId);
+        if (restored) {
+          setCurrentUser(restored);
+          if (restored.role === "admin" || restored.email === SUPER_ADMIN_EMAIL) {
+            setAdminUser(restored);
+            if (typeof window !== "undefined") {
+              window.localStorage.setItem(ADMIN_ORIGINAL_KEY, restored.id);
+            }
+          }
+        } else {
+          setCurrentUser(null);
+        }
+      }
       setLoading(false);
     })();
   }, []);
 
   const selectUser = (user: UserProfile) => {
+    // Agar current user admin hai aur dusre me ja raha hai toh admin ko save rakho
+    if ((currentUser?.role === "admin" || currentUser?.email === SUPER_ADMIN_EMAIL) && !adminUser) {
+      setAdminUser(currentUser);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(ADMIN_ORIGINAL_KEY, currentUser.id);
+      }
+    }
+
     setCurrentUser(user);
     if (typeof window !== "undefined") {
       window.localStorage.setItem(ACTIVE_USER_KEY, user.id);
+    }
+  };
+
+  const switchBackToAdmin = () => {
+    if (adminUser) {
+      setCurrentUser(adminUser);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(ACTIVE_USER_KEY, adminUser.id);
+        window.localStorage.removeItem(ADMIN_ORIGINAL_KEY);
+      }
+      setAdminUser(null);
     }
   };
 
@@ -91,9 +126,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
   ): Promise<{ success: boolean; error?: string }> => {
     const cleanEmail = email.trim().toLowerCase();
     const cleanName = name.trim();
-    // Super admin email check
-    const role =
-      cleanEmail === SUPER_ADMIN_EMAIL ? "admin" : assignedRole || "student";
+    const role = cleanEmail === SUPER_ADMIN_EMAIL ? "admin" : assignedRole || "student";
 
     try {
       const { data: existingUser, error: fetchErr } = await supabase
@@ -102,12 +135,9 @@ export function UserProvider({ children }: { children: ReactNode }) {
         .eq("email", cleanEmail)
         .maybeSingle();
 
-      if (fetchErr) {
-        return { success: false, error: fetchErr.message };
-      }
+      if (fetchErr) return { success: false, error: fetchErr.message };
 
       if (existingUser) {
-        // Agar super admin email hai to role force update karein
         if (cleanEmail === SUPER_ADMIN_EMAIL && existingUser.role !== "admin") {
           await supabase.from("users").update({ role: "admin" }).eq("id", existingUser.id);
           existingUser.role = "admin";
@@ -123,9 +153,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
         .select()
         .single();
 
-      if (insertErr) {
-        return { success: false, error: insertErr.message };
-      }
+      if (insertErr) return { success: false, error: insertErr.message };
 
       if (data) {
         await refreshUsers();
@@ -139,39 +167,27 @@ export function UserProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // Naye users ko Admin banana ya hatana
   const promoteToAdmin = async (userId: string, newRole: "admin" | "student") => {
-    const { error } = await supabase
-      .from("users")
-      .update({ role: newRole })
-      .eq("id", userId);
-
+    const { error } = await supabase.from("users").update({ role: newRole }).eq("id", userId);
     if (!error) {
       await refreshUsers();
-      if (currentUser?.id === userId) {
-        setCurrentUser((prev) => (prev ? { ...prev, role: newRole } : null));
-      }
       return true;
     }
     return false;
   };
 
-  const deleteUser = async (
-    userId: string
-  ): Promise<{ success: boolean; error?: string }> => {
+  const deleteUser = async (userId: string): Promise<{ success: boolean; error?: string }> => {
     try {
       const { error } = await supabase.from("users").delete().eq("id", userId);
-
-      if (error) {
-        return { success: false, error: error.message };
-      }
+      if (error) return { success: false, error: error.message };
 
       if (typeof window !== "undefined") {
         window.localStorage.removeItem(ACTIVE_USER_KEY);
+        window.localStorage.removeItem(ADMIN_ORIGINAL_KEY);
       }
       setCurrentUser(null);
+      setAdminUser(null);
       await refreshUsers();
-
       return { success: true };
     } catch (err: any) {
       return { success: false, error: err.message || "Failed to delete user." };
@@ -180,21 +196,31 @@ export function UserProvider({ children }: { children: ReactNode }) {
 
   const signOut = () => {
     setCurrentUser(null);
+    setAdminUser(null);
     if (typeof window !== "undefined") {
       window.localStorage.removeItem(ACTIVE_USER_KEY);
+      window.localStorage.removeItem(ADMIN_ORIGINAL_KEY);
     }
   };
 
-  const isAdmin = currentUser?.role === "admin" || currentUser?.email === SUPER_ADMIN_EMAIL;
+  const isImpersonating = Boolean(adminUser && currentUser?.id !== adminUser.id);
+  const isAdmin = Boolean(
+    currentUser?.role === "admin" ||
+    currentUser?.email === SUPER_ADMIN_EMAIL ||
+    isImpersonating
+  );
 
   return (
     <UserContext.Provider
       value={{
         currentUser,
+        adminUser,
         users,
         loading,
         isAdmin,
+        isImpersonating,
         selectUser,
+        switchBackToAdmin,
         addUser,
         promoteToAdmin,
         deleteUser,
