@@ -11,20 +11,16 @@ const BULK_PRESET_LINKS = [
     url: "https://iitiansgateclasses.com/gate-previous-year-question-papers",
   },
   {
-    title: "PDF EDITOR",
+    title: "PDF UTILITY STUDIO",
     url: "https://pdf-utility-studio.vercel.app/",
   },
-  {
+   {
     title: "TOPICWISE PYQs (KGAI)",
     url: "https://www.knowledgegate.ai/courses/GATE-GUIDANCE-BY-SANCHIT-SIR",
   },
-  {
-    title: "BACKEND LEARNING MANUAL",
-    url: "https://backend-learning-dashboard.vercel.app/",
-  },
-  {
-    title: "SARVODAYA PUBLIC SCHOOL",
-    url: "https://sarvodaya-digital.vercel.app/",
+   {
+    title: "GATE Calculator",
+    url: "https://gatecalculator.in/",
   },
 ];
 
