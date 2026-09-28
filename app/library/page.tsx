@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, ChangeEvent } from "react";
+import { useState, useEffect, useCallback, ChangeEvent, useMemo } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 interface LibraryItem {
@@ -10,13 +10,15 @@ interface LibraryItem {
   parent_id: string | null;
   file_url: string | null;
   file_path: string | null;
-  file_type: "pdf" | "video" | "note" | null;
+  file_type: "pdf" | "video" | "image" | "note" | null;
+  file_size?: number | null;
   storage_provider?: "supabase" | "cloudinary" | null;
   created_at: string;
 }
 
 export default function LibraryPage() {
   const [items, setItems] = useState<LibraryItem[]>([]);
+  const [allItems, setAllItems] = useState<LibraryItem[]>([]); // Full dataset for storage calculation
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [uploadProgressText, setUploadProgressText] = useState("");
@@ -41,7 +43,17 @@ export default function LibraryPage() {
   const [editingItem, setEditingItem] = useState<LibraryItem | null>(null);
   const [renameValue, setRenameValue] = useState("");
 
-  // 1. Current level ke folder aur files load karna
+  // 1. Fetch all items (used for calculating total storage used across all folders)
+  const fetchAllStorageUsage = useCallback(async () => {
+    const { data } = await supabase
+      .from("library_items")
+      .select("id, file_size, storage_provider, type");
+    if (data) {
+      setAllItems(data as LibraryItem[]);
+    }
+  }, []);
+
+  // 2. Current level ke folder aur files load karna
   const fetchCurrentItems = useCallback(async () => {
     setLoading(true);
     let query = supabase
@@ -67,7 +79,32 @@ export default function LibraryPage() {
 
   useEffect(() => {
     fetchCurrentItems();
-  }, [fetchCurrentItems]);
+    fetchAllStorageUsage();
+  }, [fetchCurrentItems, fetchAllStorageUsage]);
+
+  // Total Storage Calculations (in MB)
+  const { supabaseUsedMB, cloudinaryUsedMB } = useMemo(() => {
+    let sbBytes = 0;
+    let cdBytes = 0;
+
+    allItems.forEach((i) => {
+      if (i.type === "file" && i.file_size) {
+        if (i.storage_provider === "supabase") {
+          sbBytes += Number(i.file_size);
+        } else if (i.storage_provider === "cloudinary") {
+          cdBytes += Number(i.file_size);
+        }
+      }
+    });
+
+    return {
+      supabaseUsedMB: sbBytes / (1024 * 1024),
+      cloudinaryUsedMB: cdBytes / (1024 * 1024),
+    };
+  }, [allItems]);
+
+  const SUPABASE_MAX_MB = 1024; // 1 GB
+  const CLOUDINARY_MAX_MB = 25600; // 25 GB (~25 Credits)
 
   const handleOpenFolder = (folder: LibraryItem) => {
     setFolderPath((prev) => [...prev, folder]);
@@ -85,7 +122,7 @@ export default function LibraryPage() {
     }
   };
 
-  // Naya Folder / Subfolder create karna
+  // Create Folder
   const handleCreateFolder = async () => {
     if (!newFolderName.trim()) return;
 
@@ -141,18 +178,21 @@ export default function LibraryPage() {
     };
   };
 
-  // Process File Upload
+  // Process File Upload (PDF, Video, Image)
   const handleConfirmUpload = async () => {
     if (!selectedFile) return;
 
-    const isPdf = selectedFile.type === "application/pdf" || selectedFile.name.endsWith(".pdf");
-    const isVideo = selectedFile.type.startsWith("video/") || /\.(mp4|mkv|webm)$/i.test(selectedFile.name);
-    const fileCategory: "pdf" | "video" = isVideo ? "video" : "pdf";
+    let fileCategory: "pdf" | "video" | "image" = "pdf";
+    if (selectedFile.type.startsWith("image/") || /\.(jpg|jpeg|png|webp|svg)$/i.test(selectedFile.name)) {
+      fileCategory = "image";
+    } else if (selectedFile.type.startsWith("video/") || /\.(mp4|mkv|webm)$/i.test(selectedFile.name)) {
+      fileCategory = "video";
+    }
 
     setUploading(true);
     setUploadProgressText(
       selectedProvider === "cloudinary"
-        ? "Uploading to Cloudinary (25 GB Cloud)..."
+        ? "Uploading to Cloudinary (25 GB)..."
         : "Uploading to Supabase Storage..."
     );
 
@@ -191,6 +231,7 @@ export default function LibraryPage() {
           file_url: fileUrl,
           file_path: filePath,
           file_type: fileCategory,
+          file_size: selectedFile.size,
           storage_provider: selectedProvider,
         })
         .select()
@@ -198,9 +239,11 @@ export default function LibraryPage() {
 
       if (dbError) throw dbError;
 
-      if (dbData) setItems((prev) => [...prev, dbData]);
+      if (dbData) {
+        setItems((prev) => [...prev, dbData]);
+        setAllItems((prev) => [...prev, dbData]);
+      }
 
-      // Reset modal state
       setSelectedFile(null);
       setShowUploadModal(false);
     } catch (err: any) {
@@ -282,6 +325,7 @@ export default function LibraryPage() {
       if (error) throw error;
 
       setItems((prev) => prev.filter((i) => i.id !== item.id));
+      setAllItems((prev) => prev.filter((i) => i.id !== item.id));
     } catch (err: any) {
       alert("Delete failed: " + err.message);
     }
@@ -296,7 +340,7 @@ export default function LibraryPage() {
             📚 GATE Preparation Library
           </h1>
           <p className="text-sm text-slate-500 mt-1">
-            Store PDFs, video lectures, and revision notes across Supabase and Cloudinary.
+            Store PDFs, images, video lectures, and revision notes across Supabase & Cloudinary.
           </p>
         </div>
 
@@ -320,8 +364,65 @@ export default function LibraryPage() {
             onClick={() => setShowUploadModal(true)}
             className="px-3.5 py-2 text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors shadow-sm flex items-center gap-1.5"
           >
-            ⬆️ Upload File (PDF/Video)
+            ⬆️ Upload File (PDF/Img/Vid)
           </button>
+        </div>
+      </div>
+
+      {/* Cloud Storage Usage Indicator Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Supabase Usage */}
+        <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+              <h2 className="text-xs font-bold text-slate-700 uppercase tracking-wide">
+                Supabase Storage
+              </h2>
+            </div>
+            <span className="text-xs font-bold text-slate-800">
+              {supabaseUsedMB.toFixed(2)} MB / 1 GB
+            </span>
+          </div>
+          <div className="mt-2.5 h-2 w-full rounded-full bg-slate-100 overflow-hidden">
+            <div
+              className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+              style={{
+                width: `${Math.min(100, (supabaseUsedMB / SUPABASE_MAX_MB) * 100)}%`,
+              }}
+            />
+          </div>
+          <p className="text-[11px] text-slate-400 mt-1.5">
+            {((supabaseUsedMB / SUPABASE_MAX_MB) * 100).toFixed(1)}% used • Free tier limit: 1 GB
+          </p>
+        </div>
+
+        {/* Cloudinary Usage */}
+        <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-sky-500" />
+              <h2 className="text-xs font-bold text-slate-700 uppercase tracking-wide">
+                Cloudinary Storage
+              </h2>
+            </div>
+            <span className="text-xs font-bold text-slate-800">
+              {cloudinaryUsedMB >= 1024
+                ? `${(cloudinaryUsedMB / 1024).toFixed(2)} GB / 25 GB`
+                : `${cloudinaryUsedMB.toFixed(2)} MB / 25 GB`}
+            </span>
+          </div>
+          <div className="mt-2.5 h-2 w-full rounded-full bg-slate-100 overflow-hidden">
+            <div
+              className="h-full bg-sky-500 rounded-full transition-all duration-300"
+              style={{
+                width: `${Math.min(100, (cloudinaryUsedMB / CLOUDINARY_MAX_MB) * 100)}%`,
+              }}
+            />
+          </div>
+          <p className="text-[11px] text-slate-400 mt-1.5">
+            {((cloudinaryUsedMB / CLOUDINARY_MAX_MB) * 100).toFixed(2)}% used • Free tier limit: 25 GB[cite: 17]
+          </p>
         </div>
       </div>
 
@@ -363,7 +464,7 @@ export default function LibraryPage() {
         <div className="text-center py-16 border-2 border-dashed border-slate-200 rounded-2xl bg-white">
           <p className="text-slate-400 text-sm">Yeh folder abhi khali hai.</p>
           <p className="text-xs text-slate-400 mt-1">
-            Upar diye gaye buttons se PDF/Video upload karein ya subfolder banayein.
+            Upar diye gaye buttons se PDF, Image ya Video upload karein.
           </p>
         </div>
       ) : (
@@ -392,6 +493,8 @@ export default function LibraryPage() {
                         ? "📁"
                         : item.file_type === "pdf"
                         ? "📄"
+                        : item.file_type === "image"
+                        ? "🖼️"
                         : item.file_type === "video"
                         ? "🎥"
                         : "🔗"}
@@ -420,6 +523,13 @@ export default function LibraryPage() {
                   >
                     {item.name}
                   </h3>
+
+                  {/* File Size details */}
+                  {item.file_size ? (
+                    <p className="text-[11px] text-slate-400">
+                      {(item.file_size / (1024 * 1024)).toFixed(2)} MB
+                    </p>
+                  ) : null}
                 </div>
 
                 {/* Bottom Actions Bar */}
@@ -453,7 +563,7 @@ export default function LibraryPage() {
                         rel="noopener noreferrer"
                         className="text-indigo-600 hover:underline font-medium text-[11px]"
                       >
-                        Open
+                        View
                       </a>
                       <a
                         href={item.file_url}
@@ -480,7 +590,7 @@ export default function LibraryPage() {
         </div>
       )}
 
-      {/* Modal: Upload File (Cloud Selection) */}
+      {/* Modal: Upload File (Cloud Selection + PDF, Image, Video) */}
       {showUploadModal && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl space-y-4">
@@ -488,7 +598,7 @@ export default function LibraryPage() {
               Upload Study Resource
             </h3>
 
-            {/* Storage Provider Radio */}
+            {/* Storage Provider Selection */}
             <div className="space-y-2">
               <label className="text-xs font-semibold text-slate-600 block">
                 Choose Storage Cloud:
@@ -512,7 +622,7 @@ export default function LibraryPage() {
                     <span className="text-xs font-bold text-slate-800">Cloudinary</span>
                   </div>
                   <span className="text-[11px] text-slate-500 mt-1">
-                    25 GB Free • Best for Videos & Large PDFs
+                    25 GB Free • Best for Images, Videos & Large PDFs[cite: 17]
                   </span>
                 </label>
 
@@ -534,20 +644,20 @@ export default function LibraryPage() {
                     <span className="text-xs font-bold text-slate-800">Supabase</span>
                   </div>
                   <span className="text-[11px] text-slate-500 mt-1">
-                    1 GB Free • Good for Short Notes
+                    1 GB Free • Good for Short Notes & Docs
                   </span>
                 </label>
               </div>
             </div>
 
-            {/* File Selector */}
+            {/* File Selector: PDF, Images, Videos */}
             <div className="space-y-1.5 pt-2">
               <label className="text-xs font-semibold text-slate-600 block">
-                Select File (.pdf, .mp4, .mkv):
+                Select File (PDF, Image, or Video):
               </label>
               <input
                 type="file"
-                accept=".pdf,video/mp4,video/mkv,video/webm"
+                accept=".pdf,image/png,image/jpeg,image/webp,video/mp4,video/mkv,video/webm"
                 onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
                 className="w-full text-xs text-slate-600 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer border border-slate-200 rounded-lg p-1.5"
               />
@@ -589,7 +699,7 @@ export default function LibraryPage() {
             <h3 className="text-base font-bold text-slate-800">Create New Folder</h3>
             <input
               type="text"
-              placeholder="e.g. Chapter 1 Notes, PYQs"
+              placeholder="e.g. Chapter 1 Notes, Diagrams"
               value={newFolderName}
               onChange={(e) => setNewFolderName(e.target.value)}
               className="w-full text-sm px-3.5 py-2 border border-slate-300 rounded-lg focus:outline-indigo-600"
@@ -623,7 +733,7 @@ export default function LibraryPage() {
             <h3 className="text-base font-bold text-slate-800">Add Note Link</h3>
             <input
               type="text"
-              placeholder="Note Title (e.g. Short Notes)"
+              placeholder="Note Title (e.g. Formula Sheet)"
               value={noteTitle}
               onChange={(e) => setNoteTitle(e.target.value)}
               className="w-full text-sm px-3.5 py-2 border border-slate-300 rounded-lg focus:outline-indigo-600"
