@@ -186,7 +186,7 @@ export default function StudyLinksManager() {
             disabled={isImporting}
             className="text-xs px-3 py-1.5 rounded-lg font-medium bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors disabled:opacity-50 cursor-pointer"
           >
-            {isImporting ? "Adding..." : "⚡ Add All 5 Preset Links"}
+            {isImporting ? "Adding..." : "⚡ Add All Preset Links"}
           </button>
 
           {/* Bulk Delete Controls */}
@@ -346,7 +346,7 @@ export default function StudyLinksManager() {
 
         {links.length === 0 && (
           <div className="text-center py-6 text-sm text-gray-400">
-            No links added yet. Click &quot;Add All 5 Preset Links&quot; above to load links in one click.
+            No links added yet. Click &quot;Add All Preset Links&quot; above to load links in one click.
           </div>
         )}
 
