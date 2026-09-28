@@ -14,6 +14,7 @@ interface LibraryItem {
   file_path: string | null;
   file_type: "pdf" | "video" | "image" | "note" | null;
   file_size?: number | null;
+  content?: string | null;
   storage_provider?: "supabase" | "cloudinary" | null;
   created_at: string;
 }
@@ -40,9 +41,11 @@ export default function LibraryPage() {
   const [showCreateFolderModal, setShowCreateFolderModal] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
 
-  const [showAddNoteModal, setShowAddNoteModal] = useState(false);
+  // Markdown Note State
+  const [showCreateNoteModal, setShowCreateNoteModal] = useState(false);
   const [noteTitle, setNoteTitle] = useState("");
-  const [noteLink, setNoteLink] = useState("");
+  const [noteContent, setNoteContent] = useState("");
+  const [viewingNote, setViewingNote] = useState<LibraryItem | null>(null);
 
   const [editingItem, setEditingItem] = useState<LibraryItem | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -91,7 +94,6 @@ export default function LibraryPage() {
       query = query.is("parent_id", null);
     }
 
-    // Role-based visibility
     if (!isRealAdmin) {
       if (currentUser?.id) {
         query = query.or(`user_id.is.null,user_id.eq.${currentUser.id}`);
@@ -114,7 +116,6 @@ export default function LibraryPage() {
     fetchAllStorageUsage();
   }, [fetchCurrentItems, fetchAllStorageUsage]);
 
-  // Storage consumption calculation
   const { supabaseUsedMB, cloudinaryUsedMB } = useMemo(() => {
     let sbBytes = 0;
     let cdBytes = 0;
@@ -135,8 +136,8 @@ export default function LibraryPage() {
     };
   }, [allItems]);
 
-  const SUPABASE_MAX_MB = 1024; // 1 GB
-  const CLOUDINARY_MAX_MB = 25600; // 25 GB
+  const SUPABASE_MAX_MB = 1024;
+  const CLOUDINARY_MAX_MB = 25600;
 
   const handleOpenFolder = (folder: LibraryItem) => {
     setFolderPath((prev) => [...prev, folder]);
@@ -154,7 +155,7 @@ export default function LibraryPage() {
     }
   };
 
-  // Create Folder (Admin: Global | Student: Personal)
+  // Create Folder
   const handleCreateFolder = async () => {
     if (!newFolderName.trim()) return;
 
@@ -178,40 +179,71 @@ export default function LibraryPage() {
     }
   };
 
-  // Cloudinary Direct Upload Handler
+  // Save Markdown Notes (.md)
+  const handleSaveMarkdownNote = async () => {
+    if (!noteTitle.trim() || !noteContent.trim()) {
+      alert("Title aur Content dono required hain!");
+      return;
+    }
+
+    const byteSize = new Blob([noteContent]).size;
+    const finalName = noteTitle.trim().endsWith(".md")
+      ? noteTitle.trim()
+      : `${noteTitle.trim()}.md`;
+
+    const { data, error } = await supabase
+      .from("library_items")
+      .insert({
+        name: finalName,
+        type: "file",
+        parent_id: currentFolder ? currentFolder.id : null,
+        user_id: isRealAdmin ? null : currentUser?.id || null,
+        file_type: "note",
+        content: noteContent,
+        file_size: byteSize,
+        storage_provider: null,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      alert("Note save error: " + error.message);
+    } else if (data) {
+      setItems((prev) => [...prev, data as LibraryItem]);
+      setNoteTitle("");
+      setNoteContent("");
+      setShowCreateNoteModal(false);
+    }
+  };
+
+  // Upload to Cloudinary
   const uploadToCloudinary = async (file: File) => {
     const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
     const uploadPreset = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET;
 
     if (!cloudName || !uploadPreset) {
-      throw new Error("Cloudinary credentials missing! Check .env.local");
+      throw new Error("Cloudinary credentials missing!");
     }
 
     const formData = new FormData();
     formData.append("file", file);
     formData.append("upload_preset", uploadPreset);
 
-    const res = await fetch(
-      `https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`,
-      {
-        method: "POST",
-        body: formData,
-      }
-    );
+    const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`, {
+      method: "POST",
+      body: formData,
+    });
 
     if (!res.ok) {
       const err = await res.json();
-      throw new Error(err.error?.message || "Cloudinary upload failed");
+      throw new Error(err.error?.message || "Upload failed");
     }
 
     const data = await res.json();
-    return {
-      url: data.secure_url,
-      publicId: data.public_id,
-    };
+    return { url: data.secure_url, publicId: data.public_id };
   };
 
-  // Upload File (Admin: Global | Student: Personal)
+  // Upload PDF, Video, Image
   const handleConfirmUpload = async () => {
     if (!selectedFile) return;
 
@@ -287,34 +319,6 @@ export default function LibraryPage() {
     }
   };
 
-  // Add Note Link (Admin: Global | Student: Personal)
-  const handleAddNote = async () => {
-    if (!noteTitle.trim() || !noteLink.trim()) return;
-
-    const { data, error } = await supabase
-      .from("library_items")
-      .insert({
-        name: noteTitle.trim(),
-        type: "file",
-        parent_id: currentFolder ? currentFolder.id : null,
-        user_id: isRealAdmin ? null : currentUser?.id || null,
-        file_url: noteLink.trim(),
-        file_type: "note",
-        storage_provider: null,
-      })
-      .select()
-      .single();
-
-    if (error) {
-      alert("Note creation error: " + error.message);
-    } else if (data) {
-      setItems((prev) => [...prev, data as LibraryItem]);
-      setNoteTitle("");
-      setNoteLink("");
-      setShowAddNoteModal(false);
-    }
-  };
-
   // Rename Item
   const handleRename = async () => {
     if (!editingItem || !renameValue.trim()) return;
@@ -342,7 +346,7 @@ export default function LibraryPage() {
     const isFolder = item.type === "folder";
     const confirmMsg = isFolder
       ? `Delete folder "${item.name}" and all contents inside?`
-      : `Delete file "${item.name}"?`;
+      : `Delete "${item.name}"?`;
 
     if (!confirm(confirmMsg)) return;
 
@@ -360,6 +364,7 @@ export default function LibraryPage() {
 
       setItems((prev) => prev.filter((i) => i.id !== item.id));
       setAllItems((prev) => prev.filter((i) => i.id !== item.id));
+      if (viewingNote?.id === item.id) setViewingNote(null);
     } catch (err: any) {
       alert("Delete failed: " + err.message);
     }
@@ -381,9 +386,7 @@ export default function LibraryPage() {
             )}
           </div>
           <p className="text-sm text-slate-500 mt-1">
-            {isRealAdmin
-              ? "Any resource or folder you add here will be visible to all aspirants globally."
-              : "Store PDFs, images, videos, and notes. Items added here remain private to your account."}
+            Store PDFs, markdown study notes (.md), images, and video lectures.
           </p>
         </div>
 
@@ -397,10 +400,10 @@ export default function LibraryPage() {
           </button>
 
           <button
-            onClick={() => setShowAddNoteModal(true)}
-            className="px-3.5 py-2 text-xs font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+            onClick={() => setShowCreateNoteModal(true)}
+            className="px-3.5 py-2 text-xs font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
           >
-            📝 + Add Note Link
+            📝 + Create Note (.md)
           </button>
 
           <button
@@ -414,7 +417,6 @@ export default function LibraryPage() {
 
       {/* Cloud Storage Usage Indicator Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Supabase Usage */}
         <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -440,7 +442,6 @@ export default function LibraryPage() {
           </p>
         </div>
 
-        {/* Cloudinary Usage */}
         <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -464,7 +465,7 @@ export default function LibraryPage() {
             />
           </div>
           <p className="text-[11px] text-slate-400 mt-1.5">
-            {((cloudinaryUsedMB / CLOUDINARY_MAX_MB) * 100).toFixed(2)}% used • Free tier limit: 25 GB[cite: 17]
+            {((cloudinaryUsedMB / CLOUDINARY_MAX_MB) * 100).toFixed(2)}% used • Free tier limit: 25 GB
           </p>
         </div>
       </div>
@@ -485,9 +486,7 @@ export default function LibraryPage() {
             <button
               onClick={() => handleNavigateBreadcrumb(index)}
               className={`hover:text-indigo-600 cursor-pointer ${
-                index === folderPath.length - 1
-                  ? "text-indigo-600 font-bold"
-                  : ""
+                index === folderPath.length - 1 ? "text-indigo-600 font-bold" : ""
               }`}
             >
               {folder.name}
@@ -497,23 +496,22 @@ export default function LibraryPage() {
       </div>
 
       {loading && (
-        <p className="text-center py-8 text-sm text-slate-400">
-          Loading library contents...
-        </p>
+        <p className="text-center py-8 text-sm text-slate-400">Loading library contents...</p>
       )}
 
-      {/* Main Grid: Folders & Files */}
+      {/* Main Grid: Folders, Notes & Files */}
       {!loading && items.length === 0 ? (
         <div className="text-center py-16 border-2 border-dashed border-slate-200 rounded-2xl bg-white">
           <p className="text-slate-400 text-sm">Yeh folder abhi khali hai.</p>
           <p className="text-xs text-slate-400 mt-1">
-            Upar diye gaye buttons se PDF, Image ya Video upload karein.
+            Upar diye gaye buttons se Note (.md) paste karein ya PDF upload karein.
           </p>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
           {items.map((item) => {
             const isFolder = item.type === "folder";
+            const isNote = item.file_type === "note";
             const isGlobalItem = item.user_id === null;
 
             return (
@@ -521,13 +519,11 @@ export default function LibraryPage() {
                 key={item.id}
                 className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm hover:shadow-md hover:border-indigo-300 transition-all flex flex-col justify-between group"
               >
-                {/* Content Icon & Name */}
                 <div
                   onClick={() => {
                     if (isFolder) handleOpenFolder(item);
-                    else if (item.file_url) {
-                      window.open(item.file_url, "_blank");
-                    }
+                    else if (isNote) setViewingNote(item);
+                    else if (item.file_url) window.open(item.file_url, "_blank");
                   }}
                   className="cursor-pointer space-y-2"
                 >
@@ -535,13 +531,13 @@ export default function LibraryPage() {
                     <span className="text-2xl">
                       {isFolder
                         ? "📁"
+                        : isNote
+                        ? "📝"
                         : item.file_type === "pdf"
                         ? "📄"
                         : item.file_type === "image"
                         ? "🖼️"
-                        : item.file_type === "video"
-                        ? "🎥"
-                        : "🔗"}
+                        : "🎥"}
                     </span>
                     <div className="flex items-center gap-1.5">
                       {isGlobalItem ? (
@@ -553,17 +549,9 @@ export default function LibraryPage() {
                           Personal
                         </span>
                       )}
-                      {item.storage_provider && (
-                        <span
-                          className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider ${
-                            item.storage_provider === "cloudinary"
-                              ? "bg-sky-50 text-sky-700 border border-sky-200"
-                              : "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                          }`}
-                        >
-                          {item.storage_provider === "cloudinary" ? "Cloudinary" : "Supabase"}
-                        </span>
-                      )}
+                      <span className="text-[10px] uppercase font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-500">
+                        {isFolder ? "Folder" : item.file_type === "note" ? ".md Note" : item.file_type}
+                      </span>
                     </div>
                   </div>
 
@@ -574,9 +562,17 @@ export default function LibraryPage() {
                     {item.name}
                   </h3>
 
+                  {isNote && item.content && (
+                    <p className="text-[11px] text-slate-400 line-clamp-2 font-mono">
+                      {item.content.slice(0, 100)}...
+                    </p>
+                  )}
+
                   {item.file_size ? (
                     <p className="text-[11px] text-slate-400">
-                      {(item.file_size / (1024 * 1024)).toFixed(2)} MB
+                      {item.file_size < 1024 * 1024
+                        ? `${(item.file_size / 1024).toFixed(1)} KB`
+                        : `${(item.file_size / (1024 * 1024)).toFixed(2)} MB`}
                     </p>
                   ) : null}
                 </div>
@@ -584,7 +580,6 @@ export default function LibraryPage() {
                 {/* Bottom Actions Bar */}
                 <div className="pt-3 mt-3 border-t border-slate-100 flex items-center justify-between text-xs">
                   <div className="flex items-center gap-1.5">
-                    {/* Allow editing/deleting if admin OR owner of personal item */}
                     {(isRealAdmin || item.user_id === currentUser?.id) && (
                       <>
                         <button
@@ -609,7 +604,16 @@ export default function LibraryPage() {
                     )}
                   </div>
 
-                  {!isFolder && item.file_url && (
+                  {isNote && (
+                    <button
+                      onClick={() => setViewingNote(item)}
+                      className="text-emerald-700 hover:underline font-semibold text-[11px] cursor-pointer"
+                    >
+                      Read Note ↗
+                    </button>
+                  )}
+
+                  {!isFolder && !isNote && item.file_url && (
                     <div className="flex items-center gap-2">
                       <a
                         href={item.file_url}
@@ -644,14 +648,124 @@ export default function LibraryPage() {
         </div>
       )}
 
-      {/* Modal: Upload File */}
+      {/* Modal 1: Create / Paste Markdown Note */}
+      {showCreateNoteModal && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-2xl shadow-xl space-y-4 max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between border-b pb-3">
+              <div>
+                <h3 className="text-base font-bold text-slate-800">
+                  📝 Save Markdown Notes (.md)
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Paste explanations, formulas, or code generated by ChatGPT/Gemini.
+                </p>
+              </div>
+              {isRealAdmin && (
+                <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                  Global Note
+                </span>
+              )}
+            </div>
+
+            <div className="space-y-3 flex-1 overflow-y-auto">
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  Note Title
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Dijkstra Algorithm Explanation"
+                  value={noteTitle}
+                  onChange={(e) => setNoteTitle(e.target.value)}
+                  className="w-full text-sm px-3.5 py-2 border border-slate-300 rounded-lg focus:outline-indigo-600"
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  Markdown Content
+                </label>
+                <textarea
+                  rows={12}
+                  placeholder={`# Chapter Notes\n\nPaste here directly from AI:\n- Key concept 1\n- Formula: E = mc^2\n\n\`\`\`c\n// Code snippet\n\`\`\``}
+                  value={noteContent}
+                  onChange={(e) => setNoteContent(e.target.value)}
+                  className="w-full text-xs font-mono px-3.5 py-2.5 border border-slate-300 rounded-lg focus:outline-indigo-600 leading-relaxed bg-slate-50/50"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                onClick={() => {
+                  setShowCreateNoteModal(false);
+                  setNoteTitle("");
+                  setNoteContent("");
+                }}
+                className="px-3.5 py-1.5 text-xs text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveMarkdownNote}
+                className="px-4 py-1.5 text-xs font-semibold bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 shadow-sm cursor-pointer"
+              >
+                Save Note
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 2: Readable Note Viewer */}
+      {viewingNote && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-3xl shadow-2xl space-y-4 max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between border-b pb-3">
+              <div>
+                <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
+                  <span>📝</span> {viewingNote.name}
+                </h3>
+                <span className="text-[11px] text-slate-400">
+                  Created {new Date(viewingNote.created_at).toLocaleDateString()}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(viewingNote.content || "");
+                    alert("Note copied to clipboard!");
+                  }}
+                  className="px-2.5 py-1 text-xs border border-slate-200 rounded-md hover:bg-slate-50 cursor-pointer text-slate-600"
+                >
+                  📋 Copy Text
+                </button>
+                <button
+                  onClick={() => setViewingNote(null)}
+                  className="px-2.5 py-1 text-xs bg-slate-100 hover:bg-slate-200 rounded-md cursor-pointer text-slate-700 font-semibold"
+                >
+                  ✕ Close
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 bg-slate-50 rounded-xl border border-slate-200">
+              <pre className="text-xs sm:text-sm font-sans whitespace-pre-wrap leading-relaxed text-slate-800 break-words font-normal">
+                {viewingNote.content || "Empty Note"}
+              </pre>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 3: Upload File */}
       {showUploadModal && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="text-base font-bold text-slate-800">
-                Upload Study Resource
-              </h3>
+              <h3 className="text-base font-bold text-slate-800">Upload Study Resource</h3>
               {isRealAdmin && (
                 <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
                   Global Upload
@@ -659,7 +773,6 @@ export default function LibraryPage() {
               )}
             </div>
 
-            {/* Storage Provider Selection */}
             <div className="space-y-2">
               <label className="text-xs font-semibold text-slate-600 block">
                 Choose Storage Cloud:
@@ -683,7 +796,7 @@ export default function LibraryPage() {
                     <span className="text-xs font-bold text-slate-800">Cloudinary</span>
                   </div>
                   <span className="text-[11px] text-slate-500 mt-1">
-                    25 GB Free • Best for Images, Videos & Large PDFs[cite: 17]
+                    25 GB Free • Best for Images, Videos & Large PDFs
                   </span>
                 </label>
 
@@ -711,7 +824,6 @@ export default function LibraryPage() {
               </div>
             </div>
 
-            {/* File Selector */}
             <div className="space-y-1.5 pt-2">
               <label className="text-xs font-semibold text-slate-600 block">
                 Select File (PDF, Image, or Video):
@@ -753,7 +865,7 @@ export default function LibraryPage() {
         </div>
       )}
 
-      {/* Modal: Create Folder */}
+      {/* Modal 4: Create Folder */}
       {showCreateFolderModal && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl space-y-4">
@@ -787,48 +899,7 @@ export default function LibraryPage() {
         </div>
       )}
 
-      {/* Modal: Add Note Link */}
-      {showAddNoteModal && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl space-y-4">
-            <h3 className="text-base font-bold text-slate-800">Add Note Link</h3>
-            <input
-              type="text"
-              placeholder="Note Title (e.g. Formula Sheet)"
-              value={noteTitle}
-              onChange={(e) => setNoteTitle(e.target.value)}
-              className="w-full text-sm px-3.5 py-2 border border-slate-300 rounded-lg focus:outline-indigo-600"
-            />
-            <input
-              type="url"
-              placeholder="URL (Google Drive, Notion link, etc.)"
-              value={noteLink}
-              onChange={(e) => setNoteLink(e.target.value)}
-              className="w-full text-sm px-3.5 py-2 border border-slate-300 rounded-lg focus:outline-indigo-600"
-            />
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => {
-                  setShowAddNoteModal(false);
-                  setNoteTitle("");
-                  setNoteLink("");
-                }}
-                className="px-3.5 py-1.5 text-xs text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleAddNote}
-                className="px-3.5 py-1.5 text-xs font-semibold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 cursor-pointer"
-              >
-                Save Note
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal: Rename Item */}
+      {/* Modal 5: Rename Item */}
       {editingItem && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl space-y-4">
