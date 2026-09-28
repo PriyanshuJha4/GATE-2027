@@ -8,6 +8,7 @@ import { useUser } from "./UserContext";
 const NAV_ITEMS = [
   { label: "Dashboard", href: "/" },
   { label: "Syllabus Tracker", href: "/syllabus" },
+  { label: "📚 Library", href: "/library" },
   { label: "Weekly Matrix", href: "/weekly-matrix" },
   { label: "Error Log", href: "/error-log" },
   { label: "Roadmap", href: "/roadmap" },
