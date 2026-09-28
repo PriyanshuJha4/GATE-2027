@@ -22,7 +22,7 @@ export default function Sidebar() {
   const [open, setOpen] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const { currentUser, signOut, deleteUser } = useUser();
+  const { currentUser, signOut, deleteUser, isAdmin } = useUser();
 
   const handleSignOut = () => {
     setOpen(false);
@@ -45,15 +45,14 @@ export default function Sidebar() {
 
   return (
     <>
-      {/* 1. हमेशा टॉप पर रहने वाली हेडर बार (3-लाइन बटन के साथ) */}
+      {/* 1. Top Header Bar with Hamburger Button */}
       <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-gray-200 px-4 py-3 flex items-center justify-between shadow-xs">
         <div className="flex items-center gap-3">
           <button
             onClick={() => setOpen(true)}
             aria-label="Open menu"
-            className="p-2 rounded-xl text-gray-700 hover:bg-gray-100 hover:text-brand active:scale-95 transition-all flex items-center justify-center border border-gray-200"
+            className="p-2 rounded-xl text-gray-700 hover:bg-gray-100 hover:text-brand active:scale-95 transition-all flex items-center justify-center border border-gray-200 cursor-pointer"
           >
-            {/* 3-Line Hamburger Icon */}
             <svg
               className="w-5 h-5"
               fill="none"
@@ -74,7 +73,7 @@ export default function Sidebar() {
         </div>
       </header>
 
-      {/* 2. स्क्रीन पर क्लिक करते ही साइडबार बंद होने वाला ओवरले */}
+      {/* 2. Backdrop Overlay */}
       {open && (
         <div
           className="fixed inset-0 bg-black/40 backdrop-blur-xs z-50 transition-opacity duration-300"
@@ -82,20 +81,20 @@ export default function Sidebar() {
         />
       )}
 
-      {/* 3. स्लाइड-इन साइडबार (Left to Right स्लाइड) */}
+      {/* 3. Slide-in Sidebar */}
       <aside
         className={`fixed top-0 left-0 h-screen w-72 sm:w-80 bg-white border-r border-gray-200 p-5 z-50 transition-transform duration-300 ease-in-out overflow-y-auto flex flex-col justify-between shadow-2xl ${
           open ? "translate-x-0" : "-translate-x-full"
         }`}
       >
         <div>
-          {/* हेडर और क्लोज़ (X) बटन */}
+          {/* Header & Close (X) Button */}
           <div className="flex items-center justify-between mb-5 border-b pb-3">
             <h1 className="font-extrabold text-brand text-xl tracking-wide">
               GATE 2027
             </h1>
             <button
-              className="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition-colors"
+              className="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition-colors cursor-pointer"
               onClick={() => setOpen(false)}
               aria-label="Close menu"
             >
@@ -115,10 +114,23 @@ export default function Sidebar() {
             </button>
           </div>
 
+          {/* User Profile Card / Sign In */}
           <UserSwitcher />
 
-          {/* नेविगेशन लिंक्स */}
+          {/* Navigation Links */}
           <nav className="mt-5 space-y-1">
+            {/* Admin-only Navigation Tab */}
+            {isAdmin && (
+              <Link
+                href="/admin"
+                onClick={() => setOpen(false)}
+                className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-sm font-bold text-amber-800 bg-amber-50 hover:bg-amber-100 transition-colors border border-amber-200 mb-2 shadow-2xs"
+              >
+                <span>👑</span>
+                <span>Admin Panel & Users</span>
+              </Link>
+            )}
+
             {NAV_ITEMS.map((item) => (
               <Link
                 key={item.href}
@@ -132,13 +144,20 @@ export default function Sidebar() {
           </nav>
         </div>
 
-        {/* बॉटम प्रोफ़ाइल, अकाउंट डिलीट और साइन आउट */}
+        {/* Bottom Profile, Delete Account & Sign Out */}
         <div className="pt-4 mt-6 border-t border-gray-100 space-y-2">
           {currentUser && (
             <div className="mb-2 px-2">
-              <p className="text-xs font-semibold text-gray-800 truncate">
-                {currentUser.name}
-              </p>
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold text-gray-800 truncate">
+                  {currentUser.name}
+                </p>
+                {isAdmin && (
+                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200">
+                    Admin
+                  </span>
+                )}
+              </div>
               <p className="text-[11px] text-gray-500 truncate">
                 {currentUser.email}
               </p>
@@ -150,7 +169,7 @@ export default function Sidebar() {
               {!showDeleteConfirm ? (
                 <button
                   onClick={() => setShowDeleteConfirm(true)}
-                  className="w-full flex items-center justify-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium text-gray-500 hover:text-red-600 hover:bg-red-50 transition-colors"
+                  className="w-full flex items-center justify-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium text-gray-500 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
                 >
                   <svg
                     className="w-3.5 h-3.5"
@@ -193,25 +212,27 @@ export default function Sidebar() {
             </div>
           )}
 
-          <button
-            onClick={handleSignOut}
-            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 transition-colors"
-          >
-            <svg
-              className="w-4 h-4"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
+          {currentUser && (
+            <button
+              onClick={handleSignOut}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 transition-colors cursor-pointer"
             >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
-              />
-            </svg>
-            Sign Out
-          </button>
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
+                />
+              </svg>
+              Sign Out
+            </button>
+          )}
         </div>
       </aside>
     </>
