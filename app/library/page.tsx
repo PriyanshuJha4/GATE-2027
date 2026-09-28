@@ -14,7 +14,6 @@ interface LibraryItem {
   file_path: string | null;
   file_type: "pdf" | "video" | "image" | "note" | null;
   file_size?: number | null;
-  content?: string | null;
   storage_provider?: "supabase" | "cloudinary" | null;
   created_at: string;
 }
@@ -28,7 +27,7 @@ export default function LibraryPage() {
   const [uploading, setUploading] = useState(false);
   const [uploadProgressText, setUploadProgressText] = useState("");
 
-  // Storage selection modal
+  // Storage selection modal (For Files)
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState<"cloudinary" | "supabase">("cloudinary");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -41,11 +40,17 @@ export default function LibraryPage() {
   const [showCreateFolderModal, setShowCreateFolderModal] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
 
-  // Markdown Note State
+  // Markdown Note State with Storage Provider Selection
   const [showCreateNoteModal, setShowCreateNoteModal] = useState(false);
   const [noteTitle, setNoteTitle] = useState("");
   const [noteContent, setNoteContent] = useState("");
+  const [noteProvider, setNoteProvider] = useState<"supabase" | "cloudinary">("supabase");
+  const [isSavingNote, setIsSavingNote] = useState(false);
+
+  // Note Viewer State
   const [viewingNote, setViewingNote] = useState<LibraryItem | null>(null);
+  const [viewingContent, setViewingContent] = useState<string>("");
+  const [loadingNoteContent, setLoadingNoteContent] = useState(false);
 
   const [editingItem, setEditingItem] = useState<LibraryItem | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -179,54 +184,17 @@ export default function LibraryPage() {
     }
   };
 
-  // Save Markdown Notes (.md)
-  const handleSaveMarkdownNote = async () => {
-    if (!noteTitle.trim() || !noteContent.trim()) {
-      alert("Title aur Content dono required hain!");
-      return;
-    }
-
-    const byteSize = new Blob([noteContent]).size;
-    const finalName = noteTitle.trim().endsWith(".md")
-      ? noteTitle.trim()
-      : `${noteTitle.trim()}.md`;
-
-    const { data, error } = await supabase
-      .from("library_items")
-      .insert({
-        name: finalName,
-        type: "file",
-        parent_id: currentFolder ? currentFolder.id : null,
-        user_id: isRealAdmin ? null : currentUser?.id || null,
-        file_type: "note",
-        content: noteContent,
-        file_size: byteSize,
-        storage_provider: null,
-      })
-      .select()
-      .single();
-
-    if (error) {
-      alert("Note save error: " + error.message);
-    } else if (data) {
-      setItems((prev) => [...prev, data as LibraryItem]);
-      setNoteTitle("");
-      setNoteContent("");
-      setShowCreateNoteModal(false);
-    }
-  };
-
-  // Upload to Cloudinary
-  const uploadToCloudinary = async (file: File) => {
+  // Cloudinary Direct Upload for Files & Blobs
+  const uploadToCloudinary = async (file: File | Blob, fileName: string) => {
     const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
     const uploadPreset = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET;
 
     if (!cloudName || !uploadPreset) {
-      throw new Error("Cloudinary credentials missing!");
+      throw new Error("Cloudinary credentials missing in .env.local!");
     }
 
     const formData = new FormData();
-    formData.append("file", file);
+    formData.append("file", file, fileName);
     formData.append("upload_preset", uploadPreset);
 
     const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`, {
@@ -236,14 +204,106 @@ export default function LibraryPage() {
 
     if (!res.ok) {
       const err = await res.json();
-      throw new Error(err.error?.message || "Upload failed");
+      throw new Error(err.error?.message || "Cloudinary upload failed");
     }
 
     const data = await res.json();
     return { url: data.secure_url, publicId: data.public_id };
   };
 
-  // Upload PDF, Video, Image
+  // Save Markdown Notes (.md file in Supabase or Cloudinary storage)
+  const handleSaveMarkdownNote = async () => {
+    if (!noteTitle.trim() || !noteContent.trim()) {
+      alert("Title aur Content dono required hain!");
+      return;
+    }
+
+    setIsSavingNote(true);
+
+    try {
+      const cleanBaseName = noteTitle.trim().replace(/[^a-zA-Z0-9_-]/g, "_");
+      const fileName = `${cleanBaseName}.md`;
+      const noteBlob = new Blob([noteContent], { type: "text/markdown" });
+      const byteSize = noteBlob.size;
+
+      let fileUrl = "";
+      let filePath = "";
+
+      if (noteProvider === "cloudinary") {
+        const cloudRes = await uploadToCloudinary(noteBlob, fileName);
+        fileUrl = cloudRes.url;
+        filePath = cloudRes.publicId;
+      } else {
+        const storagePath = `notes/${currentFolder ? currentFolder.id : "root"}/${Date.now()}_${fileName}`;
+        const { error: uploadError } = await supabase.storage
+          .from("gate-library")
+          .upload(storagePath, noteBlob, { contentType: "text/markdown", cacheControl: "3600" });
+
+        if (uploadError) throw uploadError;
+
+        const { data: urlData } = supabase.storage
+          .from("gate-library")
+          .getPublicUrl(storagePath);
+
+        fileUrl = urlData.publicUrl;
+        filePath = storagePath;
+      }
+
+      const { data: dbData, error: dbError } = await supabase
+        .from("library_items")
+        .insert({
+          name: fileName,
+          type: "file",
+          parent_id: currentFolder ? currentFolder.id : null,
+          user_id: isRealAdmin ? null : currentUser?.id || null,
+          file_type: "note",
+          file_url: fileUrl,
+          file_path: filePath,
+          file_size: byteSize,
+          storage_provider: noteProvider,
+        })
+        .select()
+        .single();
+
+      if (dbError) throw dbError;
+
+      if (dbData) {
+        setItems((prev) => [...prev, dbData as LibraryItem]);
+        setAllItems((prev) => [...prev, dbData as LibraryItem]);
+      }
+
+      setNoteTitle("");
+      setNoteContent("");
+      setShowCreateNoteModal(false);
+    } catch (err: any) {
+      alert("Note save karne me error: " + err.message);
+    } finally {
+      setIsSavingNote(false);
+    }
+  };
+
+  // Open & Fetch Note text from Storage
+  const handleOpenNoteViewer = async (item: LibraryItem) => {
+    setViewingNote(item);
+    setViewingContent("");
+    setLoadingNoteContent(true);
+
+    try {
+      if (item.file_url) {
+        const res = await fetch(item.file_url);
+        const text = await res.text();
+        setViewingContent(text);
+      } else {
+        setViewingContent("No content found.");
+      }
+    } catch (err) {
+      setViewingContent("Note load karne me problem aayi.");
+    } finally {
+      setLoadingNoteContent(false);
+    }
+  };
+
+  // Upload File (PDF/Image/Video)
   const handleConfirmUpload = async () => {
     if (!selectedFile) return;
 
@@ -266,7 +326,7 @@ export default function LibraryPage() {
       let filePath = "";
 
       if (selectedProvider === "cloudinary") {
-        const cloudRes = await uploadToCloudinary(selectedFile);
+        const cloudRes = await uploadToCloudinary(selectedFile, selectedFile.name);
         fileUrl = cloudRes.url;
         filePath = cloudRes.publicId;
       } else {
@@ -386,7 +446,7 @@ export default function LibraryPage() {
             )}
           </div>
           <p className="text-sm text-slate-500 mt-1">
-            Store PDFs, markdown study notes (.md), images, and video lectures.
+            Store PDFs, markdown study notes (.md), images, and video lectures across Supabase & Cloudinary.
           </p>
         </div>
 
@@ -522,7 +582,7 @@ export default function LibraryPage() {
                 <div
                   onClick={() => {
                     if (isFolder) handleOpenFolder(item);
-                    else if (isNote) setViewingNote(item);
+                    else if (isNote) handleOpenNoteViewer(item);
                     else if (item.file_url) window.open(item.file_url, "_blank");
                   }}
                   className="cursor-pointer space-y-2"
@@ -549,9 +609,17 @@ export default function LibraryPage() {
                           Personal
                         </span>
                       )}
-                      <span className="text-[10px] uppercase font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-500">
-                        {isFolder ? "Folder" : item.file_type === "note" ? ".md Note" : item.file_type}
-                      </span>
+                      {item.storage_provider && (
+                        <span
+                          className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider ${
+                            item.storage_provider === "cloudinary"
+                              ? "bg-sky-50 text-sky-700 border border-sky-200"
+                              : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                          }`}
+                        >
+                          {item.storage_provider === "cloudinary" ? "Cloudinary" : "Supabase"}
+                        </span>
+                      )}
                     </div>
                   </div>
 
@@ -561,12 +629,6 @@ export default function LibraryPage() {
                   >
                     {item.name}
                   </h3>
-
-                  {isNote && item.content && (
-                    <p className="text-[11px] text-slate-400 line-clamp-2 font-mono">
-                      {item.content.slice(0, 100)}...
-                    </p>
-                  )}
 
                   {item.file_size ? (
                     <p className="text-[11px] text-slate-400">
@@ -606,7 +668,7 @@ export default function LibraryPage() {
 
                   {isNote && (
                     <button
-                      onClick={() => setViewingNote(item)}
+                      onClick={() => handleOpenNoteViewer(item)}
                       className="text-emerald-700 hover:underline font-semibold text-[11px] cursor-pointer"
                     >
                       Read Note ↗
@@ -648,17 +710,17 @@ export default function LibraryPage() {
         </div>
       )}
 
-      {/* Modal 1: Create / Paste Markdown Note */}
+      {/* Modal 1: Create Note (.md) with Storage Choice */}
       {showCreateNoteModal && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-2xl shadow-xl space-y-4 max-h-[90vh] flex flex-col">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-2xl shadow-xl space-y-4 max-h-[92vh] flex flex-col">
             <div className="flex items-center justify-between border-b pb-3">
               <div>
                 <h3 className="text-base font-bold text-slate-800">
                   📝 Save Markdown Notes (.md)
                 </h3>
                 <p className="text-xs text-slate-500">
-                  Paste explanations, formulas, or code generated by ChatGPT/Gemini.
+                  Saves directly into cloud storage instead of cluttering the database.
                 </p>
               </div>
               {isRealAdmin && (
@@ -669,6 +731,58 @@ export default function LibraryPage() {
             </div>
 
             <div className="space-y-3 flex-1 overflow-y-auto">
+              {/* Storage Choice for Notes */}
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  Choose Storage Cloud for this Note:
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <label
+                    className={`p-2.5 rounded-xl border flex flex-col cursor-pointer transition-all ${
+                      noteProvider === "supabase"
+                        ? "border-emerald-500 bg-emerald-50/50 ring-1 ring-emerald-500"
+                        : "border-slate-200 hover:border-slate-300"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name="noteStorage"
+                        checked={noteProvider === "supabase"}
+                        onChange={() => setNoteProvider("supabase")}
+                        className="text-emerald-600"
+                      />
+                      <span className="text-xs font-bold text-slate-800">Supabase Storage</span>
+                    </div>
+                    <span className="text-[10px] text-slate-500 mt-0.5">
+                      1 GB Free • Instant fast loading for text
+                    </span>
+                  </label>
+
+                  <label
+                    className={`p-2.5 rounded-xl border flex flex-col cursor-pointer transition-all ${
+                      noteProvider === "cloudinary"
+                        ? "border-sky-500 bg-sky-50/50 ring-1 ring-sky-500"
+                        : "border-slate-200 hover:border-slate-300"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name="noteStorage"
+                        checked={noteProvider === "cloudinary"}
+                        onChange={() => setNoteProvider("cloudinary")}
+                        className="text-sky-600"
+                      />
+                      <span className="text-xs font-bold text-slate-800">Cloudinary (25 GB)</span>
+                    </div>
+                    <span className="text-[10px] text-slate-500 mt-0.5">
+                      Massive 25 GB cloud capacity
+                    </span>
+                  </label>
+                </div>
+              </div>
+
               <div>
                 <label className="text-xs font-semibold text-slate-700 block mb-1">
                   Note Title
@@ -685,11 +799,11 @@ export default function LibraryPage() {
 
               <div>
                 <label className="text-xs font-semibold text-slate-700 block mb-1">
-                  Markdown Content
+                  Markdown Content (Paste AI Output here)
                 </label>
                 <textarea
-                  rows={12}
-                  placeholder={`# Chapter Notes\n\nPaste here directly from AI:\n- Key concept 1\n- Formula: E = mc^2\n\n\`\`\`c\n// Code snippet\n\`\`\``}
+                  rows={10}
+                  placeholder={`# Chapter Notes\n\nPaste here directly from ChatGPT or Gemini:\n- Key concept 1\n- Formula: Time Complexity = O(V + E)\n\n\`\`\`c\n// Code snippet\n\`\`\``}
                   value={noteContent}
                   onChange={(e) => setNoteContent(e.target.value)}
                   className="w-full text-xs font-mono px-3.5 py-2.5 border border-slate-300 rounded-lg focus:outline-indigo-600 leading-relaxed bg-slate-50/50"
@@ -699,20 +813,22 @@ export default function LibraryPage() {
 
             <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
               <button
+                disabled={isSavingNote}
                 onClick={() => {
                   setShowCreateNoteModal(false);
                   setNoteTitle("");
                   setNoteContent("");
                 }}
-                className="px-3.5 py-1.5 text-xs text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer"
+                className="px-3.5 py-1.5 text-xs text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
+                disabled={isSavingNote}
                 onClick={handleSaveMarkdownNote}
-                className="px-4 py-1.5 text-xs font-semibold bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 shadow-sm cursor-pointer"
+                className="px-4 py-1.5 text-xs font-semibold bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 shadow-sm cursor-pointer disabled:opacity-50"
               >
-                Save Note
+                {isSavingNote ? "Uploading to Cloud..." : "Save Note"}
               </button>
             </div>
           </div>
@@ -728,20 +844,33 @@ export default function LibraryPage() {
                 <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
                   <span>📝</span> {viewingNote.name}
                 </h3>
-                <span className="text-[11px] text-slate-400">
-                  Created {new Date(viewingNote.created_at).toLocaleDateString()}
-                </span>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-[11px] text-slate-400">
+                    Storage: <strong className="uppercase">{viewingNote.storage_provider}</strong>
+                  </span>
+                  <span className="text-[11px] text-slate-400">•</span>
+                  <span className="text-[11px] text-slate-400">
+                    Created {new Date(viewingNote.created_at).toLocaleDateString()}
+                  </span>
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => {
-                    navigator.clipboard.writeText(viewingNote.content || "");
-                    alert("Note copied to clipboard!");
+                    navigator.clipboard.writeText(viewingContent);
+                    alert("Note content copied to clipboard!");
                   }}
                   className="px-2.5 py-1 text-xs border border-slate-200 rounded-md hover:bg-slate-50 cursor-pointer text-slate-600"
                 >
                   📋 Copy Text
                 </button>
+                <a
+                  href={viewingNote.file_url || "#"}
+                  download={viewingNote.name}
+                  className="px-2.5 py-1 text-xs border border-slate-200 rounded-md hover:bg-slate-50 text-slate-600"
+                >
+                  ⬇️ Download .md
+                </a>
                 <button
                   onClick={() => setViewingNote(null)}
                   className="px-2.5 py-1 text-xs bg-slate-100 hover:bg-slate-200 rounded-md cursor-pointer text-slate-700 font-semibold"
@@ -752,15 +881,21 @@ export default function LibraryPage() {
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 bg-slate-50 rounded-xl border border-slate-200">
-              <pre className="text-xs sm:text-sm font-sans whitespace-pre-wrap leading-relaxed text-slate-800 break-words font-normal">
-                {viewingNote.content || "Empty Note"}
-              </pre>
+              {loadingNoteContent ? (
+                <p className="text-xs text-slate-400 text-center py-10 animate-pulse">
+                  Loading note from {viewingNote.storage_provider}...
+                </p>
+              ) : (
+                <pre className="text-xs sm:text-sm font-sans whitespace-pre-wrap leading-relaxed text-slate-800 break-words font-normal">
+                  {viewingContent}
+                </pre>
+              )}
             </div>
           </div>
         </div>
       )}
 
-      {/* Modal 3: Upload File */}
+      {/* Modal 3: Upload File (PDF/Image/Video) */}
       {showUploadModal && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl space-y-4">
