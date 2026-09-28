@@ -14,11 +14,11 @@ const BULK_PRESET_LINKS = [
     title: "PDF UTILITY STUDIO",
     url: "https://pdf-utility-studio.vercel.app/",
   },
-   {
+  {
     title: "TOPICWISE PYQs (KGAI)",
     url: "https://www.knowledgegate.ai/courses/GATE-GUIDANCE-BY-SANCHIT-SIR",
   },
-   {
+  {
     title: "GATE Calculator",
     url: "https://gatecalculator.in/",
   },
@@ -72,7 +72,7 @@ export default function StudyLinksManager() {
     loadLinks();
   }, [loadLinks]);
 
-  // 1-Click Import of 5 Links (Admin adds as global, student adds as personal)
+  // 1-Click Import of Preset Links (Admin adds as global, student adds as personal)
   async function handleOneClickImport() {
     setIsImporting(true);
 
@@ -180,14 +180,16 @@ export default function StudyLinksManager() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {/* Preset Add Button */}
-          <button
-            onClick={handleOneClickImport}
-            disabled={isImporting}
-            className="text-xs px-3 py-1.5 rounded-lg font-medium bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors disabled:opacity-50 cursor-pointer"
-          >
-            {isImporting ? "Adding..." : "⚡ Add All Preset Links"}
-          </button>
+          {/* Preset Add Button - Strictly visible to Admin only */}
+          {isRealAdmin && (
+            <button
+              onClick={handleOneClickImport}
+              disabled={isImporting}
+              className="text-xs px-3 py-1.5 rounded-lg font-medium bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              {isImporting ? "Adding..." : "⚡ Add All Preset Links"}
+            </button>
+          )}
 
           {/* Bulk Delete Controls */}
           {isEditMode && selectedIds.length > 0 && (
@@ -346,7 +348,9 @@ export default function StudyLinksManager() {
 
         {links.length === 0 && (
           <div className="text-center py-6 text-sm text-gray-400">
-            No links added yet. Click &quot;Add All Preset Links&quot; above to load links in one click.
+            {isRealAdmin
+              ? "No links added yet. Click \"Add All Preset Links\" above to load global links."
+              : "No links available right now."}
           </div>
         )}
 
