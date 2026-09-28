@@ -2,7 +2,8 @@ export interface UserProfile {
   id: string;
   name: string;
   email: string;
-  created_at: string;
+  role?: "admin" | "student";
+  created_at?: string;
 }
 
 export interface WeeklyProgress {

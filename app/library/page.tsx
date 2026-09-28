@@ -421,7 +421,7 @@ export default function LibraryPage() {
             />
           </div>
           <p className="text-[11px] text-slate-400 mt-1.5">
-            {((cloudinaryUsedMB / CLOUDINARY_MAX_MB) * 100).toFixed(2)}% used • Free tier limit: 25 GB[cite: 17]
+            {((cloudinaryUsedMB / CLOUDINARY_MAX_MB) * 100).toFixed(2)}% used • Free tier limit: 25 GB
           </p>
         </div>
       </div>
@@ -622,7 +622,7 @@ export default function LibraryPage() {
                     <span className="text-xs font-bold text-slate-800">Cloudinary</span>
                   </div>
                   <span className="text-[11px] text-slate-500 mt-1">
-                    25 GB Free • Best for Images, Videos & Large PDFs[cite: 17]
+                    25 GB Free • Best for Images, Videos & Large PDFs
                   </span>
                 </label>
 

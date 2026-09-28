@@ -10,15 +10,20 @@ import {
 import { supabase } from "@/lib/supabaseClient";
 import { UserProfile } from "@/lib/types";
 
+export const SUPER_ADMIN_EMAIL = "jhaprem1.10@gmail.com";
+
 interface UserContextValue {
   currentUser: UserProfile | null;
   users: UserProfile[];
   loading: boolean;
+  isAdmin: boolean;
   selectUser: (user: UserProfile) => void;
   addUser: (
     name: string,
-    email: string
+    email: string,
+    role?: "admin" | "student"
   ) => Promise<{ success: boolean; error?: string }>;
+  promoteToAdmin: (userId: string, newRole: "admin" | "student") => Promise<boolean>;
   deleteUser: (userId: string) => Promise<{ success: boolean; error?: string }>;
   signOut: () => void;
   refreshUsers: () => Promise<UserProfile[]>;
@@ -81,10 +86,14 @@ export function UserProvider({ children }: { children: ReactNode }) {
 
   const addUser = async (
     name: string,
-    email: string
+    email: string,
+    assignedRole?: "admin" | "student"
   ): Promise<{ success: boolean; error?: string }> => {
     const cleanEmail = email.trim().toLowerCase();
     const cleanName = name.trim();
+    // Super admin email check
+    const role =
+      cleanEmail === SUPER_ADMIN_EMAIL ? "admin" : assignedRole || "student";
 
     try {
       const { data: existingUser, error: fetchErr } = await supabase
@@ -98,6 +107,11 @@ export function UserProvider({ children }: { children: ReactNode }) {
       }
 
       if (existingUser) {
+        // Agar super admin email hai to role force update karein
+        if (cleanEmail === SUPER_ADMIN_EMAIL && existingUser.role !== "admin") {
+          await supabase.from("users").update({ role: "admin" }).eq("id", existingUser.id);
+          existingUser.role = "admin";
+        }
         await refreshUsers();
         selectUser(existingUser as UserProfile);
         return { success: true };
@@ -105,7 +119,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
 
       const { data, error: insertErr } = await supabase
         .from("users")
-        .insert([{ name: cleanName, email: cleanEmail }])
+        .insert([{ name: cleanName, email: cleanEmail, role }])
         .select()
         .single();
 
@@ -125,6 +139,23 @@ export function UserProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  // Naye users ko Admin banana ya hatana
+  const promoteToAdmin = async (userId: string, newRole: "admin" | "student") => {
+    const { error } = await supabase
+      .from("users")
+      .update({ role: newRole })
+      .eq("id", userId);
+
+    if (!error) {
+      await refreshUsers();
+      if (currentUser?.id === userId) {
+        setCurrentUser((prev) => (prev ? { ...prev, role: newRole } : null));
+      }
+      return true;
+    }
+    return false;
+  };
+
   const deleteUser = async (
     userId: string
   ): Promise<{ success: boolean; error?: string }> => {
@@ -135,7 +166,6 @@ export function UserProvider({ children }: { children: ReactNode }) {
         return { success: false, error: error.message };
       }
 
-      // Local storage clear aur logout state
       if (typeof window !== "undefined") {
         window.localStorage.removeItem(ACTIVE_USER_KEY);
       }
@@ -155,14 +185,18 @@ export function UserProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const isAdmin = currentUser?.role === "admin" || currentUser?.email === SUPER_ADMIN_EMAIL;
+
   return (
     <UserContext.Provider
       value={{
         currentUser,
         users,
         loading,
+        isAdmin,
         selectUser,
         addUser,
+        promoteToAdmin,
         deleteUser,
         signOut,
         refreshUsers,
