@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { turso } from "@/lib/tursoClient";
+import { getTursoClient } from "@/lib/tursoClient";
 import crypto from "crypto";
+
+export const dynamic = "force-dynamic";
 
 // GET: All formulas
 export async function GET() {
   try {
+    const turso = getTursoClient();
     const result = await turso.execute(
       "SELECT * FROM formulas ORDER BY subject ASC, topic ASC"
     );
@@ -14,7 +17,7 @@ export async function GET() {
   }
 }
 
-// POST: Naya formula add karein
+// POST: Add new formula
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -27,6 +30,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const turso = getTursoClient();
     const id = crypto.randomUUID();
 
     await turso.execute({
