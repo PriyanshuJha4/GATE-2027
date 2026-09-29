@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Client, Storage, ID, InputFile } from "node-appwrite";
+import { Client, Storage, ID } from "node-appwrite";
 
 const client = new Client()
   .setEndpoint(process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || "https://cloud.appwrite.io/v1")
@@ -18,12 +18,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "File is required" }, { status: 400 });
     }
 
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const inputFile = InputFile.fromBuffer(buffer, fileName);
-
     const bucketId = process.env.APPWRITE_BUCKET_ID!;
-    const uploadedFile = await storage.createFile(bucketId, ID.unique(), inputFile);
 
+    // Native standard File object directly supported in node-appwrite
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const uploadPayload = new File([buffer], fileName, { type: file.type || "application/octet-stream" });
+
+    const uploadedFile = await storage.createFile(bucketId, ID.unique(), uploadPayload);
+
+    // Public view URL
     const fileUrl = `${process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT}/storage/buckets/${bucketId}/files/${uploadedFile.$id}/view?project=${process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID}`;
 
     return NextResponse.json({
