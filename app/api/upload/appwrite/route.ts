@@ -19,14 +19,19 @@ export async function POST(req: NextRequest) {
     }
 
     const bucketId = process.env.APPWRITE_BUCKET_ID!;
-
-    // Native standard File object directly supported in node-appwrite
     const buffer = Buffer.from(await file.arrayBuffer());
-    const uploadPayload = new File([buffer], fileName, { type: file.type || "application/octet-stream" });
+    
+    // Standard web File instance (compatible with node-appwrite)
+    const uploadPayload = new File([buffer], fileName, {
+      type: file.type || "application/octet-stream",
+    });
 
-    const uploadedFile = await storage.createFile(bucketId, ID.unique(), uploadPayload);
+    const uploadedFile = await (storage as any).createFile(
+      bucketId,
+      ID.unique(),
+      uploadPayload
+    );
 
-    // Public view URL
     const fileUrl = `${process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT}/storage/buckets/${bucketId}/files/${uploadedFile.$id}/view?project=${process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID}`;
 
     return NextResponse.json({
