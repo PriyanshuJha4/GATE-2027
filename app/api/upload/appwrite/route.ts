@@ -19,13 +19,15 @@ export async function POST(req: NextRequest) {
     }
 
     const bucketId = process.env.APPWRITE_BUCKET_ID!;
-    const buffer = Buffer.from(await file.arrayBuffer());
+    const arrayBuffer = await file.arrayBuffer();
+    const uint8Array = new Uint8Array(arrayBuffer);
 
-    const uploadPayload = new File([buffer], fileName, {
+    // Uint8Array BlobPart standard ko fully satisfy karta hai (no red line)
+    const uploadPayload = new File([uint8Array], fileName, {
       type: file.type || "application/octet-stream",
     });
 
-    const uploadedFile = await (storage as any).createFile(
+    const uploadedFile: any = await (storage as any).createFile(
       bucketId,
       ID.unique(),
       uploadPayload
