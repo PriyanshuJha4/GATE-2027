@@ -14,7 +14,7 @@ interface LibraryItem {
   file_path: string | null;
   file_type: "pdf" | "video" | "image" | "note" | null;
   file_size?: number | null;
-  storage_provider?: "supabase" | "cloudinary" | null;
+  storage_provider?: "supabase" | "cloudinary" | "imagekit" | "appwrite" | null;
   created_at: string;
 }
 
@@ -27,27 +27,22 @@ export default function LibraryPage() {
   const [uploading, setUploading] = useState(false);
   const [uploadProgressText, setUploadProgressText] = useState("");
 
-  // Storage selection modal (For Files)
   const [showUploadModal, setShowUploadModal] = useState(false);
-  const [selectedProvider, setSelectedProvider] = useState<"cloudinary" | "supabase">("cloudinary");
+  const [selectedProvider, setSelectedProvider] = useState<"cloudinary" | "supabase" | "imagekit" | "appwrite">("appwrite");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
-  // Folder navigation history
   const [currentFolder, setCurrentFolder] = useState<LibraryItem | null>(null);
   const [folderPath, setFolderPath] = useState<LibraryItem[]>([]);
 
-  // Modals & form state
   const [showCreateFolderModal, setShowCreateFolderModal] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
 
-  // Markdown Note State with Storage Provider Selection
   const [showCreateNoteModal, setShowCreateNoteModal] = useState(false);
   const [noteTitle, setNoteTitle] = useState("");
   const [noteContent, setNoteContent] = useState("");
-  const [noteProvider, setNoteProvider] = useState<"supabase" | "cloudinary">("supabase");
+  const [noteProvider, setNoteProvider] = useState<"supabase" | "cloudinary" | "imagekit" | "appwrite">("appwrite");
   const [isSavingNote, setIsSavingNote] = useState(false);
 
-  // Note Viewer State
   const [viewingNote, setViewingNote] = useState<LibraryItem | null>(null);
   const [viewingContent, setViewingContent] = useState<string>("");
   const [loadingNoteContent, setLoadingNoteContent] = useState(false);
@@ -55,7 +50,6 @@ export default function LibraryPage() {
   const [editingItem, setEditingItem] = useState<LibraryItem | null>(null);
   const [renameValue, setRenameValue] = useState("");
 
-  // Determine if acting as genuine super admin
   const isRealAdmin = useMemo(() => {
     return (
       (currentUser?.role === "admin" || currentUser?.email === SUPER_ADMIN_EMAIL) &&
@@ -63,7 +57,6 @@ export default function LibraryPage() {
     );
   }, [currentUser, isImpersonating]);
 
-  // 1. Fetch all items for storage indicator calculation
   const fetchAllStorageUsage = useCallback(async () => {
     let query = supabase
       .from("library_items")
@@ -83,7 +76,6 @@ export default function LibraryPage() {
     }
   }, [isRealAdmin, currentUser]);
 
-  // 2. Load folders and files for current level
   const fetchCurrentItems = useCallback(async () => {
     setLoading(true);
 
@@ -121,9 +113,11 @@ export default function LibraryPage() {
     fetchAllStorageUsage();
   }, [fetchCurrentItems, fetchAllStorageUsage]);
 
-  const { supabaseUsedMB, cloudinaryUsedMB } = useMemo(() => {
+  const { supabaseUsedMB, cloudinaryUsedMB, imagekitUsedMB, appwriteUsedMB } = useMemo(() => {
     let sbBytes = 0;
     let cdBytes = 0;
+    let ikBytes = 0;
+    let awBytes = 0;
 
     allItems.forEach((i) => {
       if (i.type === "file" && i.file_size) {
@@ -131,6 +125,10 @@ export default function LibraryPage() {
           sbBytes += Number(i.file_size);
         } else if (i.storage_provider === "cloudinary") {
           cdBytes += Number(i.file_size);
+        } else if (i.storage_provider === "imagekit") {
+          ikBytes += Number(i.file_size);
+        } else if (i.storage_provider === "appwrite") {
+          awBytes += Number(i.file_size);
         }
       }
     });
@@ -138,11 +136,15 @@ export default function LibraryPage() {
     return {
       supabaseUsedMB: sbBytes / (1024 * 1024),
       cloudinaryUsedMB: cdBytes / (1024 * 1024),
+      imagekitUsedMB: ikBytes / (1024 * 1024),
+      appwriteUsedMB: awBytes / (1024 * 1024),
     };
   }, [allItems]);
 
   const SUPABASE_MAX_MB = 1024;
   const CLOUDINARY_MAX_MB = 25600;
+  const IMAGEKIT_MAX_MB = 3072;
+  const APPWRITE_MAX_MB = 2048;
 
   const handleOpenFolder = (folder: LibraryItem) => {
     setFolderPath((prev) => [...prev, folder]);
@@ -160,7 +162,6 @@ export default function LibraryPage() {
     }
   };
 
-  // Create Folder
   const handleCreateFolder = async () => {
     if (!newFolderName.trim()) return;
 
@@ -184,13 +185,12 @@ export default function LibraryPage() {
     }
   };
 
-  // Cloudinary Direct Upload for Files & Blobs
   const uploadToCloudinary = async (file: File | Blob, fileName: string) => {
     const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
     const uploadPreset = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET;
 
     if (!cloudName || !uploadPreset) {
-      throw new Error("Cloudinary credentials missing in .env.local!");
+      throw new Error("Cloudinary credentials missing!");
     }
 
     const formData = new FormData();
@@ -211,7 +211,45 @@ export default function LibraryPage() {
     return { url: data.secure_url, publicId: data.public_id };
   };
 
-  // Save Markdown Notes (.md file in Supabase or Cloudinary storage)
+  const uploadToImageKit = async (file: File | Blob, fileName: string) => {
+    const formData = new FormData();
+    formData.append("file", file, fileName);
+    formData.append("fileName", fileName);
+    formData.append("folder", `/gate-library/${currentFolder ? currentFolder.name : "root"}`);
+
+    const res = await fetch("/api/upload/imagekit", {
+      method: "POST",
+      body: formData,
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || "ImageKit upload failed");
+    }
+
+    const data = await res.json();
+    return { url: data.url, fileId: data.fileId };
+  };
+
+  const uploadToAppwrite = async (file: File | Blob, fileName: string) => {
+    const formData = new FormData();
+    formData.append("file", file, fileName);
+    formData.append("fileName", fileName);
+
+    const res = await fetch("/api/upload/appwrite", {
+      method: "POST",
+      body: formData,
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || "Appwrite upload failed");
+    }
+
+    const data = await res.json();
+    return { url: data.url, fileId: data.fileId };
+  };
+
   const handleSaveMarkdownNote = async () => {
     if (!noteTitle.trim() || !noteContent.trim()) {
       alert("Title aur Content dono required hain!");
@@ -229,7 +267,15 @@ export default function LibraryPage() {
       let fileUrl = "";
       let filePath = "";
 
-      if (noteProvider === "cloudinary") {
+      if (noteProvider === "appwrite") {
+        const awRes = await uploadToAppwrite(noteBlob, fileName);
+        fileUrl = awRes.url;
+        filePath = awRes.fileId;
+      } else if (noteProvider === "imagekit") {
+        const ikRes = await uploadToImageKit(noteBlob, fileName);
+        fileUrl = ikRes.url;
+        filePath = ikRes.fileId;
+      } else if (noteProvider === "cloudinary") {
         const cloudRes = await uploadToCloudinary(noteBlob, fileName);
         fileUrl = cloudRes.url;
         filePath = cloudRes.publicId;
@@ -282,7 +328,6 @@ export default function LibraryPage() {
     }
   };
 
-  // Open & Fetch Note text from Storage
   const handleOpenNoteViewer = async (item: LibraryItem) => {
     setViewingNote(item);
     setViewingContent("");
@@ -303,7 +348,6 @@ export default function LibraryPage() {
     }
   };
 
-  // Upload File (PDF/Image/Video)
   const handleConfirmUpload = async () => {
     if (!selectedFile) return;
 
@@ -315,17 +359,21 @@ export default function LibraryPage() {
     }
 
     setUploading(true);
-    setUploadProgressText(
-      selectedProvider === "cloudinary"
-        ? "Uploading to Cloudinary (25 GB)..."
-        : "Uploading to Supabase Storage..."
-    );
+    setUploadProgressText(`Uploading to ${selectedProvider.toUpperCase()}...`);
 
     try {
       let fileUrl = "";
       let filePath = "";
 
-      if (selectedProvider === "cloudinary") {
+      if (selectedProvider === "appwrite") {
+        const awRes = await uploadToAppwrite(selectedFile, selectedFile.name);
+        fileUrl = awRes.url;
+        filePath = awRes.fileId;
+      } else if (selectedProvider === "imagekit") {
+        const ikRes = await uploadToImageKit(selectedFile, selectedFile.name);
+        fileUrl = ikRes.url;
+        filePath = ikRes.fileId;
+      } else if (selectedProvider === "cloudinary") {
         const cloudRes = await uploadToCloudinary(selectedFile, selectedFile.name);
         fileUrl = cloudRes.url;
         filePath = cloudRes.publicId;
@@ -379,7 +427,6 @@ export default function LibraryPage() {
     }
   };
 
-  // Rename Item
   const handleRename = async () => {
     if (!editingItem || !renameValue.trim()) return;
 
@@ -401,7 +448,6 @@ export default function LibraryPage() {
     }
   };
 
-  // Delete Item
   const handleDelete = async (item: LibraryItem) => {
     const isFolder = item.type === "folder";
     const confirmMsg = isFolder
@@ -446,11 +492,10 @@ export default function LibraryPage() {
             )}
           </div>
           <p className="text-sm text-slate-500 mt-1">
-            Store PDFs, markdown study notes (.md), images, and video lectures across Supabase & Cloudinary.
+            Store study resources across Supabase, Cloudinary, ImageKit & Appwrite Cloud.
           </p>
         </div>
 
-        {/* Action Buttons */}
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => setShowCreateFolderModal(true)}
@@ -475,14 +520,15 @@ export default function LibraryPage() {
         </div>
       </div>
 
-      {/* Cloud Storage Usage Indicator Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {/* Cloud Storage Usage Indicator Cards (4 Cards Grid) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* 1. Supabase */}
         <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
               <h2 className="text-xs font-bold text-slate-700 uppercase tracking-wide">
-                Supabase Storage
+                Supabase
               </h2>
             </div>
             <span className="text-xs font-bold text-slate-800">
@@ -498,16 +544,17 @@ export default function LibraryPage() {
             />
           </div>
           <p className="text-[11px] text-slate-400 mt-1.5">
-            {((supabaseUsedMB / SUPABASE_MAX_MB) * 100).toFixed(1)}% used • Free tier limit: 1 GB
+            {((supabaseUsedMB / SUPABASE_MAX_MB) * 100).toFixed(1)}% used • 1 GB Free
           </p>
         </div>
 
+        {/* 2. Cloudinary */}
         <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-sky-500" />
               <h2 className="text-xs font-bold text-slate-700 uppercase tracking-wide">
-                Cloudinary Storage
+                Cloudinary
               </h2>
             </div>
             <span className="text-xs font-bold text-slate-800">
@@ -525,7 +572,63 @@ export default function LibraryPage() {
             />
           </div>
           <p className="text-[11px] text-slate-400 mt-1.5">
-            {((cloudinaryUsedMB / CLOUDINARY_MAX_MB) * 100).toFixed(2)}% used • Free tier limit: 25 GB
+            {((cloudinaryUsedMB / CLOUDINARY_MAX_MB) * 100).toFixed(2)}% used • 25 GB Credits
+          </p>
+        </div>
+
+        {/* 3. ImageKit.io */}
+        <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-pink-500" />
+              <h2 className="text-xs font-bold text-slate-700 uppercase tracking-wide">
+                ImageKit.io
+              </h2>
+            </div>
+            <span className="text-xs font-bold text-slate-800">
+              {imagekitUsedMB >= 1024
+                ? `${(imagekitUsedMB / 1024).toFixed(2)} GB / 3 GB`
+                : `${imagekitUsedMB.toFixed(2)} MB / 3 GB`}
+            </span>
+          </div>
+          <div className="mt-2.5 h-2 w-full rounded-full bg-slate-100 overflow-hidden">
+            <div
+              className="h-full bg-pink-500 rounded-full transition-all duration-300"
+              style={{
+                width: `${Math.min(100, (imagekitUsedMB / IMAGEKIT_MAX_MB) * 100)}%`,
+              }}
+            />
+          </div>
+          <p className="text-[11px] text-slate-400 mt-1.5">
+            {((imagekitUsedMB / IMAGEKIT_MAX_MB) * 100).toFixed(2)}% used • 3 GB Storage
+          </p>
+        </div>
+
+        {/* 4. Appwrite */}
+        <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-rose-500" />
+              <h2 className="text-xs font-bold text-slate-700 uppercase tracking-wide">
+                Appwrite
+              </h2>
+            </div>
+            <span className="text-xs font-bold text-slate-800">
+              {appwriteUsedMB >= 1024
+                ? `${(appwriteUsedMB / 1024).toFixed(2)} GB / 2 GB`
+                : `${appwriteUsedMB.toFixed(2)} MB / 2 GB`}
+            </span>
+          </div>
+          <div className="mt-2.5 h-2 w-full rounded-full bg-slate-100 overflow-hidden">
+            <div
+              className="h-full bg-rose-500 rounded-full transition-all duration-300"
+              style={{
+                width: `${Math.min(100, (appwriteUsedMB / APPWRITE_MAX_MB) * 100)}%`,
+              }}
+            />
+          </div>
+          <p className="text-[11px] text-slate-400 mt-1.5">
+            {((appwriteUsedMB / APPWRITE_MAX_MB) * 100).toFixed(2)}% used • 2 GB Free
           </p>
         </div>
       </div>
@@ -614,10 +717,14 @@ export default function LibraryPage() {
                           className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider ${
                             item.storage_provider === "cloudinary"
                               ? "bg-sky-50 text-sky-700 border border-sky-200"
+                              : item.storage_provider === "imagekit"
+                              ? "bg-pink-50 text-pink-700 border border-pink-200"
+                              : item.storage_provider === "appwrite"
+                              ? "bg-rose-50 text-rose-700 border border-rose-200"
                               : "bg-emerald-50 text-emerald-700 border border-emerald-200"
                           }`}
                         >
-                          {item.storage_provider === "cloudinary" ? "Cloudinary" : "Supabase"}
+                          {item.storage_provider}
                         </span>
                       )}
                     </div>
@@ -639,7 +746,6 @@ export default function LibraryPage() {
                   ) : null}
                 </div>
 
-                {/* Bottom Actions Bar */}
                 <div className="pt-3 mt-3 border-t border-slate-100 flex items-center justify-between text-xs">
                   <div className="flex items-center gap-1.5">
                     {(isRealAdmin || item.user_id === currentUser?.id) && (
@@ -710,7 +816,7 @@ export default function LibraryPage() {
         </div>
       )}
 
-      {/* Modal 1: Create Note (.md) with Storage Choice */}
+      {/* Modal 1: Create Note (.md) */}
       {showCreateNoteModal && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-2xl shadow-xl space-y-4 max-h-[92vh] flex flex-col">
@@ -731,42 +837,59 @@ export default function LibraryPage() {
             </div>
 
             <div className="space-y-3 flex-1 overflow-y-auto">
-              {/* Storage Choice for Notes */}
               <div>
                 <label className="text-xs font-semibold text-slate-700 block mb-1">
                   Choose Storage Cloud for this Note:
                 </label>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   <label
-                    className={`p-2.5 rounded-xl border flex flex-col cursor-pointer transition-all ${
-                      noteProvider === "supabase"
-                        ? "border-emerald-500 bg-emerald-50/50 ring-1 ring-emerald-500"
+                    className={`p-2 rounded-xl border flex flex-col cursor-pointer transition-all ${
+                      noteProvider === "appwrite"
+                        ? "border-rose-500 bg-rose-50/50 ring-1 ring-rose-500"
                         : "border-slate-200 hover:border-slate-300"
                     }`}
                   >
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5">
                       <input
                         type="radio"
                         name="noteStorage"
-                        checked={noteProvider === "supabase"}
-                        onChange={() => setNoteProvider("supabase")}
-                        className="text-emerald-600"
+                        checked={noteProvider === "appwrite"}
+                        onChange={() => setNoteProvider("appwrite")}
+                        className="text-rose-600"
                       />
-                      <span className="text-xs font-bold text-slate-800">Supabase Storage</span>
+                      <span className="text-xs font-bold text-slate-800">Appwrite</span>
                     </div>
-                    <span className="text-[10px] text-slate-500 mt-0.5">
-                      1 GB Free • Instant fast loading for text
-                    </span>
+                    <span className="text-[10px] text-slate-500 mt-0.5">2 GB Free</span>
                   </label>
 
                   <label
-                    className={`p-2.5 rounded-xl border flex flex-col cursor-pointer transition-all ${
+                    className={`p-2 rounded-xl border flex flex-col cursor-pointer transition-all ${
+                      noteProvider === "imagekit"
+                        ? "border-pink-500 bg-pink-50/50 ring-1 ring-pink-500"
+                        : "border-slate-200 hover:border-slate-300"
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="radio"
+                        name="noteStorage"
+                        checked={noteProvider === "imagekit"}
+                        onChange={() => setNoteProvider("imagekit")}
+                        className="text-pink-600"
+                      />
+                      <span className="text-xs font-bold text-slate-800">ImageKit</span>
+                    </div>
+                    <span className="text-[10px] text-slate-500 mt-0.5">3 GB Free</span>
+                  </label>
+
+                  <label
+                    className={`p-2 rounded-xl border flex flex-col cursor-pointer transition-all ${
                       noteProvider === "cloudinary"
                         ? "border-sky-500 bg-sky-50/50 ring-1 ring-sky-500"
                         : "border-slate-200 hover:border-slate-300"
                     }`}
                   >
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5">
                       <input
                         type="radio"
                         name="noteStorage"
@@ -774,11 +897,29 @@ export default function LibraryPage() {
                         onChange={() => setNoteProvider("cloudinary")}
                         className="text-sky-600"
                       />
-                      <span className="text-xs font-bold text-slate-800">Cloudinary (25 GB)</span>
+                      <span className="text-xs font-bold text-slate-800">Cloudinary</span>
                     </div>
-                    <span className="text-[10px] text-slate-500 mt-0.5">
-                      Massive 25 GB cloud capacity
-                    </span>
+                    <span className="text-[10px] text-slate-500 mt-0.5">25 GB Free</span>
+                  </label>
+
+                  <label
+                    className={`p-2 rounded-xl border flex flex-col cursor-pointer transition-all ${
+                      noteProvider === "supabase"
+                        ? "border-emerald-500 bg-emerald-50/50 ring-1 ring-emerald-500"
+                        : "border-slate-200 hover:border-slate-300"
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="radio"
+                        name="noteStorage"
+                        checked={noteProvider === "supabase"}
+                        onChange={() => setNoteProvider("supabase")}
+                        className="text-emerald-600"
+                      />
+                      <span className="text-xs font-bold text-slate-800">Supabase</span>
+                    </div>
+                    <span className="text-[10px] text-slate-500 mt-0.5">1 GB Free</span>
                   </label>
                 </div>
               </div>
@@ -895,7 +1036,7 @@ export default function LibraryPage() {
         </div>
       )}
 
-      {/* Modal 3: Upload File (PDF/Image/Video) */}
+      {/* Modal 3: Upload File */}
       {showUploadModal && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl space-y-4">
@@ -912,15 +1053,55 @@ export default function LibraryPage() {
               <label className="text-xs font-semibold text-slate-600 block">
                 Choose Storage Cloud:
               </label>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 <label
-                  className={`p-3 rounded-xl border flex flex-col cursor-pointer transition-all ${
+                  className={`p-2 rounded-xl border flex flex-col cursor-pointer transition-all ${
+                    selectedProvider === "appwrite"
+                      ? "border-rose-500 bg-rose-50/50 ring-1 ring-rose-500"
+                      : "border-slate-200 hover:border-slate-300"
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="radio"
+                      name="provider"
+                      checked={selectedProvider === "appwrite"}
+                      onChange={() => setSelectedProvider("appwrite")}
+                      className="text-rose-600"
+                    />
+                    <span className="text-xs font-bold text-slate-800">Appwrite</span>
+                  </div>
+                  <span className="text-[10px] text-slate-500 mt-1">2 GB Free</span>
+                </label>
+
+                <label
+                  className={`p-2 rounded-xl border flex flex-col cursor-pointer transition-all ${
+                    selectedProvider === "imagekit"
+                      ? "border-pink-500 bg-pink-50/50 ring-1 ring-pink-500"
+                      : "border-slate-200 hover:border-slate-300"
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="radio"
+                      name="provider"
+                      checked={selectedProvider === "imagekit"}
+                      onChange={() => setSelectedProvider("imagekit")}
+                      className="text-pink-600"
+                    />
+                    <span className="text-xs font-bold text-slate-800">ImageKit</span>
+                  </div>
+                  <span className="text-[10px] text-slate-500 mt-1">3 GB Free</span>
+                </label>
+
+                <label
+                  className={`p-2 rounded-xl border flex flex-col cursor-pointer transition-all ${
                     selectedProvider === "cloudinary"
                       ? "border-sky-500 bg-sky-50/50 ring-1 ring-sky-500"
                       : "border-slate-200 hover:border-slate-300"
                   }`}
                 >
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5">
                     <input
                       type="radio"
                       name="provider"
@@ -930,19 +1111,17 @@ export default function LibraryPage() {
                     />
                     <span className="text-xs font-bold text-slate-800">Cloudinary</span>
                   </div>
-                  <span className="text-[11px] text-slate-500 mt-1">
-                    25 GB Free • Best for Images, Videos & Large PDFs
-                  </span>
+                  <span className="text-[10px] text-slate-500 mt-1">25 GB Free</span>
                 </label>
 
                 <label
-                  className={`p-3 rounded-xl border flex flex-col cursor-pointer transition-all ${
+                  className={`p-2 rounded-xl border flex flex-col cursor-pointer transition-all ${
                     selectedProvider === "supabase"
                       ? "border-emerald-500 bg-emerald-50/50 ring-1 ring-emerald-500"
                       : "border-slate-200 hover:border-slate-300"
                   }`}
                 >
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5">
                     <input
                       type="radio"
                       name="provider"
@@ -952,9 +1131,7 @@ export default function LibraryPage() {
                     />
                     <span className="text-xs font-bold text-slate-800">Supabase</span>
                   </div>
-                  <span className="text-[11px] text-slate-500 mt-1">
-                    1 GB Free • Good for Short Notes & Docs
-                  </span>
+                  <span className="text-[10px] text-slate-500 mt-1">1 GB Free</span>
                 </label>
               </div>
             </div>
