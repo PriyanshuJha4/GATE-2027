@@ -20,8 +20,7 @@ export async function POST(req: NextRequest) {
 
     const bucketId = process.env.APPWRITE_BUCKET_ID!;
     const buffer = Buffer.from(await file.arrayBuffer());
-    
-    // Standard web File instance (compatible with node-appwrite)
+
     const uploadPayload = new File([buffer], fileName, {
       type: file.type || "application/octet-stream",
     });
