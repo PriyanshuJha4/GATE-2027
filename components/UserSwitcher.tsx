@@ -1,281 +1,313 @@
 "use client";
 
-import { useState } from "react";
-import { useUser, SUPER_ADMIN_EMAIL } from "./UserContext";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  ReactNode,
+} from "react";
+import { supabase } from "@/lib/supabaseClient";
+import { UserProfile } from "@/lib/types";
 
-export default function UserSwitcher() {
-  const { currentUser, users, selectUser, loginOrRegister, forgotPassword, isAdmin } = useUser();
-  const [showAuthModal, setShowAuthModal] = useState(false);
-  const [showForgotModal, setShowForgotModal] = useState(false);
-  const [showSwitchDropdown, setShowSwitchDropdown] = useState(false);
-  
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [forgotEmail, setForgotEmail] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+export const SUPER_ADMIN_EMAIL = "jhaprem1.10@gmail.com";
 
-  const handleAuthSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name.trim() || !email.trim() || !password) return;
+interface UserContextValue {
+  currentUser: UserProfile | null;
+  adminUser: UserProfile | null;
+  users: UserProfile[];
+  loading: boolean;
+  isAdmin: boolean;
+  isImpersonating: boolean;
+  selectUser: (user: UserProfile) => void;
+  switchBackToAdmin: () => void;
+  loginOrRegister: (
+    name: string,
+    email: string,
+    password?: string,
+    securityQuestion?: string,
+    securityAnswer?: string
+  ) => Promise<{ success: boolean; error?: string }>;
+  updatePassword: (newPassword: string) => Promise<{ success: boolean; error?: string }>;
+  forgotPassword: (email: string) => Promise<{ success: boolean; error?: string }>;
+  resetPasswordWithSecurity: (
+    email: string,
+    securityAnswer: string,
+    newPassword: string
+  ) => Promise<{ success: boolean; error?: string }>;
+  deleteUser: (userId: string) => Promise<{ success: boolean; error?: string }>;
+  signOut: () => void;
+  refreshUsers: () => Promise<UserProfile[]>;
+  promoteToAdmin: (userId: string, newRole: "admin" | "student") => Promise<boolean>;
+}
 
-    setSubmitting(true);
-    setMessage(null);
-    const res = await loginOrRegister(name.trim(), email.trim(), password);
-    setSubmitting(false);
+const UserContext = createContext<UserContextValue | undefined>(undefined);
 
-    if (res.success) {
-      setName("");
-      setEmail("");
-      setPassword("");
-      setShowAuthModal(false);
-    } else {
-      setMessage({ type: "error", text: res.error || "Authentication failed" });
+const ACTIVE_USER_KEY = "gate-dashboard-active-user-id";
+const ADMIN_ORIGINAL_KEY = "gate-dashboard-admin-id";
+
+export function UserProvider({ children }: { children: ReactNode }) {
+  const [users, setUsers] = useState<UserProfile[]>([]);
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const [adminUser, setAdminUser] = useState<UserProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const refreshUsers = async (): Promise<UserProfile[]> => {
+    const { data, error } = await supabase
+      .from("users")
+      .select("*")
+      .order("created_at", { ascending: true });
+
+    if (!error && data) {
+      setUsers(data as UserProfile[]);
+      return data as UserProfile[];
+    }
+    return [];
+  };
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      const fetchedUsers = await refreshUsers();
+
+      const savedActiveId =
+        typeof window !== "undefined"
+          ? window.localStorage.getItem(ACTIVE_USER_KEY)
+          : null;
+      const savedAdminId =
+        typeof window !== "undefined"
+          ? window.localStorage.getItem(ADMIN_ORIGINAL_KEY)
+          : null;
+
+      if (savedAdminId) {
+        const foundAdmin = fetchedUsers.find((u) => u.id === savedAdminId);
+        if (foundAdmin) setAdminUser(foundAdmin);
+      }
+
+      if (savedActiveId) {
+        const restored = fetchedUsers.find((u) => u.id === savedActiveId);
+        if (restored) {
+          setCurrentUser(restored);
+          if (restored.role === "admin" || restored.email === SUPER_ADMIN_EMAIL) {
+            setAdminUser(restored);
+            if (typeof window !== "undefined") {
+              window.localStorage.setItem(ADMIN_ORIGINAL_KEY, restored.id);
+            }
+          }
+        }
+      }
+      setLoading(false);
+    })();
+  }, []);
+
+  const selectUser = (user: UserProfile) => {
+    if ((currentUser?.role === "admin" || currentUser?.email === SUPER_ADMIN_EMAIL) && !adminUser) {
+      setAdminUser(currentUser);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(ADMIN_ORIGINAL_KEY, currentUser.id);
+      }
+    }
+
+    setCurrentUser(user);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(ACTIVE_USER_KEY, user.id);
     }
   };
 
-  const handleForgotSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!forgotEmail.trim()) return;
-
-    setSubmitting(true);
-    const res = await forgotPassword(forgotEmail.trim());
-    setSubmitting(false);
-
-    if (res.success) {
-      alert("Password reset link sent to your email!");
-      setShowForgotModal(false);
-      setForgotEmail("");
-    } else {
-      alert("Error: " + res.error);
+  const switchBackToAdmin = () => {
+    if (adminUser) {
+      setCurrentUser(adminUser);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(ACTIVE_USER_KEY, adminUser.id);
+        window.localStorage.removeItem(ADMIN_ORIGINAL_KEY);
+      }
+      setAdminUser(null);
     }
   };
 
-  // 1. Logged In View
-  if (currentUser) {
-    return (
-      <div className="space-y-3">
-        <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-              Active Account
-            </span>
-            {isAdmin ? (
-              <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300">
-                👑 ADMIN
-              </span>
-            ) : (
-              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">
-                Student
-              </span>
-            )}
-          </div>
-          <div>
-            <p className="text-sm font-bold text-slate-800 truncate">{currentUser.name}</p>
-            <p className="text-xs text-slate-500 truncate">{currentUser.email}</p>
-          </div>
-        </div>
+  const loginOrRegister = async (
+    name: string,
+    email: string,
+    password?: string,
+    securityQuestion?: string,
+    securityAnswer?: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanName = name.trim();
+    const role = cleanEmail === SUPER_ADMIN_EMAIL ? "admin" : "student";
 
-        {/* ADMIN EXCLUSIVE: Switch to any user without logging out */}
-        {isAdmin && (
-          <div className="space-y-1.5 pt-1">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold text-amber-900">
-                Switch Aspirant View:
-              </span>
-              <button
-                onClick={() => setShowSwitchDropdown(!showSwitchDropdown)}
-                className="text-[10px] text-indigo-600 hover:underline font-semibold cursor-pointer"
-              >
-                {showSwitchDropdown ? "Close" : "Change User ▾"}
-              </button>
-            </div>
+    try {
+      if (password) {
+        const { error: authErr } = await supabase.auth.signInWithPassword({
+          email: cleanEmail,
+          password,
+        });
 
-            {showSwitchDropdown && (
-              <div className="p-2 border border-amber-200 bg-amber-50/50 rounded-xl space-y-1 max-h-48 overflow-y-auto">
-                {users.map((u) => (
-                  <button
-                    key={u.id}
-                    onClick={() => {
-                      selectUser(u);
-                      setShowSwitchDropdown(false);
-                    }}
-                    className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center justify-between transition-colors cursor-pointer ${
-                      currentUser.id === u.id
-                        ? "bg-amber-600 text-white font-bold"
-                        : "hover:bg-white text-slate-700"
-                    }`}
-                  >
-                    <span className="truncate">{u.name}</span>
-                    <span className="text-[10px] opacity-75">
-                      {u.role === "admin" ? "Admin" : "Student"}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    );
-  }
+        if (authErr) {
+          const { error: signUpErr } = await supabase.auth.signUp({
+            email: cleanEmail,
+            password,
+          });
 
-  // 2. Logged Out View
-  return (
-    <div className="space-y-2">
-      <button
-        onClick={() => setShowAuthModal(true)}
-        className="w-full py-2.5 px-3 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
-      >
-        🔑 Sign In / Register
-      </button>
+          if (signUpErr) return { success: false, error: signUpErr.message };
+        }
+      }
 
-      {/* Auth Modal */}
-      {showAuthModal && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl space-y-4">
-            <div>
-              <h3 className="text-lg font-bold text-slate-800">Welcome Aspirant</h3>
-              <p className="text-xs text-slate-500 mt-1">
-                Enter your details & set up your password to track GATE progress.
-              </p>
-            </div>
+      const { data: existingUser } = await supabase
+        .from("users")
+        .select("*")
+        .eq("email", cleanEmail)
+        .maybeSingle();
 
-            {message && (
-              <div className="p-2 text-xs rounded bg-red-50 text-red-600 border border-red-200">
-                {message.text}
-              </div>
-            )}
+      if (existingUser) {
+        if (cleanEmail === SUPER_ADMIN_EMAIL && existingUser.role !== "admin") {
+          await supabase.from("users").update({ role: "admin" }).eq("id", existingUser.id);
+          existingUser.role = "admin";
+        }
+        await refreshUsers();
+        selectUser(existingUser as UserProfile);
+        return { success: true };
+      }
 
-            <form onSubmit={handleAuthSubmit} className="space-y-3">
-              <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">
-                  Full Name
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Prem Jha"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="w-full text-sm px-3 py-2 border rounded-lg focus:outline-indigo-600"
-                />
-              </div>
+      const insertData: any = {
+        name: cleanName,
+        email: cleanEmail,
+        role,
+      };
 
-              <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">
-                  Email Address
-                </label>
-                <input
-                  type="email"
-                  required
-                  placeholder="name@example.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full text-sm px-3 py-2 border rounded-lg focus:outline-indigo-600"
-                />
-                {email.trim().toLowerCase() === SUPER_ADMIN_EMAIL && (
-                  <p className="text-[11px] text-amber-600 mt-1 font-semibold">
-                    ⭐ Admin Email detected! Full control will be unlocked.
-                  </p>
-                )}
-              </div>
+      if (role === "student") {
+        insertData.security_question = securityQuestion || "Aapke favourite teacher ka naam kya hai?";
+        insertData.security_answer = securityAnswer || "";
+      }
 
-              <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">
-                  Password (Setup / Login)
-                </label>
-                <input
-                  type="password"
-                  required
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full text-sm px-3 py-2 border rounded-lg focus:outline-indigo-600"
-                />
-              </div>
+      const { data: newUserData, error: insertErr } = await supabase
+        .from("users")
+        .insert([insertData])
+        .select()
+        .single();
 
-              <div className="flex items-center justify-between text-xs pt-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowAuthModal(false);
-                    setShowForgotModal(true);
-                  }}
-                  className="text-indigo-600 hover:underline font-medium"
-                >
-                  Forgot Password?
-                </button>
-              </div>
+      if (insertErr) return { success: false, error: insertErr.message };
 
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowAuthModal(false)}
-                  className="px-3.5 py-1.5 text-xs text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="px-4 py-1.5 text-xs font-semibold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 cursor-pointer"
-                >
-                  {submitting ? "Processing..." : "Continue"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      if (newUserData) {
+        await refreshUsers();
+        selectUser(newUserData as UserProfile);
+        return { success: true };
+      }
 
-      {/* Forgot Password Modal */}
-      {showForgotModal && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl space-y-4">
-            <div>
-              <h3 className="text-lg font-bold text-slate-800">Reset Password</h3>
-              <p className="text-xs text-slate-500 mt-1">
-                Enter your registered email to receive a password reset link.
-              </p>
-            </div>
+      return { success: false, error: "Failed to create user profile." };
+    } catch (err: any) {
+      return { success: false, error: err.message || "Authentication error" };
+    }
+  };
 
-            <form onSubmit={handleForgotSubmit} className="space-y-3">
-              <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">
-                  Email Address
-                </label>
-                <input
-                  type="email"
-                  required
-                  placeholder="name@example.com"
-                  value={forgotEmail}
-                  onChange={(e) => setForgotEmail(e.target.value)}
-                  className="w-full text-sm px-3 py-2 border rounded-lg focus:outline-indigo-600"
-                />
-              </div>
+  const updatePassword = async (newPassword: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message || "Failed to update password" };
+    }
+  };
 
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowForgotModal(false)}
-                  className="px-3.5 py-1.5 text-xs text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="px-4 py-1.5 text-xs font-semibold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 cursor-pointer"
-                >
-                  {submitting ? "Sending..." : "Send Reset Link"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-    </div>
+  const forgotPassword = async (email: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const redirectOrigin = typeof window !== "undefined" ? window.location.origin : "";
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
+        redirectTo: `${redirectOrigin}/admin/reset-password`,
+      });
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message || "Failed to send reset link" };
+    }
+  };
+
+  const resetPasswordWithSecurity = async (
+    email: string,
+    securityAnswer: string,
+    newPassword: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const res = await fetch("/api/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, securityAnswer, newPassword }),
+      });
+      const data = await res.json();
+      return data;
+    } catch (err: any) {
+      return { success: false, error: err.message || "Failed to reset password" };
+    }
+  };
+
+  const promoteToAdmin = async (userId: string, newRole: "admin" | "student") => {
+    const { error } = await supabase.from("users").update({ role: newRole }).eq("id", userId);
+    if (!error) {
+      await refreshUsers();
+      return true;
+    }
+    return false;
+  };
+
+  const deleteUser = async (userId: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const { error } = await supabase.from("users").delete().eq("id", userId);
+      if (error) return { success: false, error: error.message };
+
+      signOut();
+      await refreshUsers();
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message || "Failed to delete user." };
+    }
+  };
+
+  const signOut = () => {
+    setCurrentUser(null);
+    setAdminUser(null);
+    supabase.auth.signOut();
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(ACTIVE_USER_KEY);
+      window.localStorage.removeItem(ADMIN_ORIGINAL_KEY);
+    }
+  };
+
+  const isImpersonating = Boolean(adminUser && currentUser?.id !== adminUser.id);
+  const isAdmin = Boolean(
+    currentUser?.role === "admin" ||
+    currentUser?.email === SUPER_ADMIN_EMAIL ||
+    isImpersonating
   );
+
+  return (
+    <UserContext.Provider
+      value={{
+        currentUser,
+        adminUser,
+        users,
+        loading,
+        isAdmin,
+        isImpersonating,
+        selectUser,
+        switchBackToAdmin,
+        loginOrRegister,
+        updatePassword,
+        forgotPassword,
+        resetPasswordWithSecurity,
+        deleteUser,
+        signOut,
+        refreshUsers,
+        promoteToAdmin,
+      }}
+    >
+      {children}
+    </UserContext.Provider>
+  );
+}
+
+export function useUser() {
+  const ctx = useContext(UserContext);
+  if (!ctx) throw new Error("useUser must be used within UserProvider");
+  return ctx;
 }
