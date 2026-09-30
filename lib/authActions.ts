@@ -1,6 +1,9 @@
-import { createClient } from "@/lib/supabaseClient"; // jo aapka supabase client import ho
+import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient();
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
 // 1. Password Create / Update
 export async function updateAdminPassword(newPassword: string) {
@@ -24,7 +27,7 @@ export async function removeAdminPassword() {
 // 3. Forgot Password Link Email
 export async function sendForgotPasswordEmail(email: string) {
   const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: `${window.location.origin}/admin/reset-password`,
+    redirectTo: `${typeof window !== "undefined" ? window.location.origin : ""}/admin/reset-password`,
   });
   if (error) throw new Error(error.message);
   return data;
