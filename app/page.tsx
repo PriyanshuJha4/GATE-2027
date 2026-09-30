@@ -3,6 +3,7 @@
 import { useState } from "react";
 import DashboardHeader from "../components/DashboardHeader";
 import ReverseCalendar from "../components/ReverseCalendar";
+import UserSecuritySettings from "../components/UserSecuritySettings";
 import { useUser, SUPER_ADMIN_EMAIL } from "../components/UserContext";
 
 const SECURITY_QUESTIONS_LIST = [
@@ -18,6 +19,7 @@ export default function DashboardPage() {
 
   const [authRole, setAuthRole] = useState<"student" | "admin">("student");
   const [studentMode, setStudentMode] = useState<"login" | "register">("login");
+  const [dashboardTab, setDashboardTab] = useState<"home" | "security">("home");
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -419,7 +421,26 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 p-4 md:p-6 space-y-4">
-      <div className="flex justify-end max-w-7xl mx-auto">
+      {/* Top Header & Navigation Tabs */}
+      <div className="flex flex-wrap items-center justify-between gap-4 max-w-7xl mx-auto border-b border-slate-800 pb-3">
+        <div className="flex gap-2">
+          <button
+            onClick={() => setDashboardTab("home")}
+            className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition cursor-pointer ${
+              dashboardTab === "home" ? "bg-indigo-600 text-white" : "bg-slate-800 text-slate-300 hover:bg-slate-700"
+            }`}
+          >
+            Dashboard Home
+          </button>
+          <button
+            onClick={() => setDashboardTab("security")}
+            className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition cursor-pointer ${
+              dashboardTab === "security" ? "bg-indigo-600 text-white" : "bg-slate-800 text-slate-300 hover:bg-slate-700"
+            }`}
+          >
+            🔒 Security & Password Settings
+          </button>
+        </div>
         <button
           onClick={() => signOut()}
           className="px-3.5 py-1.5 bg-rose-600/10 hover:bg-rose-600/20 text-rose-500 border border-rose-500/20 text-xs font-semibold rounded-lg transition cursor-pointer"
@@ -429,8 +450,16 @@ export default function DashboardPage() {
       </div>
 
       <div className="max-w-7xl mx-auto space-y-4">
-        <DashboardHeader />
-        <ReverseCalendar />
+        {dashboardTab === "home" ? (
+          <>
+            <DashboardHeader />
+            <ReverseCalendar />
+          </>
+        ) : (
+          <div className="flex justify-center py-6">
+            <UserSecuritySettings />
+          </div>
+        )}
       </div>
     </div>
   );
