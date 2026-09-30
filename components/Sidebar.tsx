@@ -21,8 +21,12 @@ const NAV_ITEMS = [
 export default function Sidebar() {
   const [open, setOpen] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
-  const { currentUser, signOut, deleteUser, isAdmin } = useUser();
+  const [isResetting, setIsResetting] = useState(false);
+  
+  const { currentUser, signOut, deleteUser, updatePassword, isAdmin } = useUser();
 
   const handleSignOut = () => {
     setOpen(false);
@@ -40,6 +44,23 @@ export default function Sidebar() {
       setOpen(false);
     } else {
       alert(result.error || "Failed to delete user account.");
+    }
+  };
+
+  const handlePasswordReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPassword) return;
+
+    setIsResetting(true);
+    const result = await updatePassword(newPassword);
+    setIsResetting(false);
+
+    if (result.success) {
+      alert("Password updated successfully!");
+      setNewPassword("");
+      setShowResetModal(false);
+    } else {
+      alert(result.error || "Failed to update password.");
     }
   };
 
@@ -114,7 +135,7 @@ export default function Sidebar() {
             </button>
           </div>
 
-          {/* User Profile Card / Sign In */}
+          {/* User Profile Card / Sign In / Switcher */}
           <UserSwitcher />
 
           {/* Navigation Links */}
@@ -144,7 +165,7 @@ export default function Sidebar() {
           </nav>
         </div>
 
-        {/* Bottom Profile, Delete Account & Sign Out */}
+        {/* Bottom Profile, Reset Password, Delete Account & Sign Out */}
         <div className="pt-4 mt-6 border-t border-gray-100 space-y-2">
           {currentUser && (
             <div className="mb-2 px-2">
@@ -165,7 +186,16 @@ export default function Sidebar() {
           )}
 
           {currentUser && (
-            <div>
+            <>
+              {/* Reset Password Button */}
+              <button
+                onClick={() => setShowResetModal(true)}
+                className="w-full flex items-center justify-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 transition-colors cursor-pointer"
+              >
+                🔒 Reset Password
+              </button>
+
+              {/* Delete Account Section */}
               {!showDeleteConfirm ? (
                 <button
                   onClick={() => setShowDeleteConfirm(true)}
@@ -195,21 +225,21 @@ export default function Sidebar() {
                     <button
                       onClick={() => setShowDeleteConfirm(false)}
                       disabled={isDeleting}
-                      className="flex-1 py-1 text-xs rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 transition-colors"
+                      className="flex-1 py-1 text-xs rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 transition-colors cursor-pointer"
                     >
                       Cancel
                     </button>
                     <button
                       onClick={handleDeleteUser}
                       disabled={isDeleting}
-                      className="flex-1 py-1 text-xs rounded bg-red-600 text-white font-medium hover:bg-red-700 transition-colors disabled:opacity-50"
+                      className="flex-1 py-1 text-xs rounded bg-red-600 text-white font-medium hover:bg-red-700 transition-colors disabled:opacity-50 cursor-pointer"
                     >
                       {isDeleting ? "Deleting..." : "Confirm"}
                     </button>
                   </div>
                 </div>
               )}
-            </div>
+            </>
           )}
 
           {currentUser && (
@@ -235,6 +265,53 @@ export default function Sidebar() {
           )}
         </div>
       </aside>
+
+      {/* Reset Password Modal */}
+      {showResetModal && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl space-y-4">
+            <div>
+              <h3 className="text-lg font-bold text-slate-800">Reset Password</h3>
+              <p className="text-xs text-slate-500 mt-1">
+                Enter your new password below.
+              </p>
+            </div>
+
+            <form onSubmit={handlePasswordReset} className="space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  New Password
+                </label>
+                <input
+                  type="password"
+                  required
+                  placeholder="••••••••"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="w-full text-sm px-3 py-2 border rounded-lg focus:outline-indigo-600"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowResetModal(false)}
+                  className="px-3.5 py-1.5 text-xs text-slate-600 rounded-lg hover:bg-gray-100 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isResetting}
+                  className="px-4 py-1.5 text-xs font-semibold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 cursor-pointer"
+                >
+                  {isResetting ? "Updating..." : "Update Password"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </>
   );
 }

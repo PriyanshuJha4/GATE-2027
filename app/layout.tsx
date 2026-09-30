@@ -4,6 +4,7 @@ import Sidebar from "@/components/Sidebar";
 import { UserProvider } from "@/components/UserContext";
 import PwaRegister from "@/components/PwaRegister";
 import ImpersonationBanner from "@/components/ImpersonationBanner";
+import ClientLayout from "@/components/ClientLayout"; // Naya client wrapper
 
 export const metadata: Metadata = {
   title: "GATE 2027 Dashboard",
@@ -40,16 +41,10 @@ export default function RootLayout({
           {/* PWA Service Worker Registration */}
           <PwaRegister />
 
-          {/* Admin Impersonation Top Switcher Banner */}
-          <ImpersonationBanner />
-
-          {/* Top Header bar with Hamburger Navigation */}
-          <Sidebar />
-
-          {/* Full Screen Content Container */}
-          <main className="w-full min-h-screen px-4 py-5 sm:px-6 md:px-8 max-w-5xl mx-auto">
+          {/* Client Wrapper to conditionally show sidebar/headers based on login state */}
+          <ClientLayout>
             {children}
-          </main>
+          </ClientLayout>
         </UserProvider>
       </body>
     </html>

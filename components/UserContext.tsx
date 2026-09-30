@@ -1,3 +1,4 @@
+"use exact client";
 "use client";
 
 import {
@@ -21,15 +22,24 @@ interface UserContextValue {
   isImpersonating: boolean;
   selectUser: (user: UserProfile) => void;
   switchBackToAdmin: () => void;
-  addUser: (
+  loginOrRegister: (
     name: string,
     email: string,
-    assignedRole?: "admin" | "student"
+    password?: string,
+    securityQuestion?: string,
+    securityAnswer?: string
   ) => Promise<{ success: boolean; error?: string }>;
-  promoteToAdmin: (userId: string, newRole: "admin" | "student") => Promise<boolean>;
+  updatePassword: (newPassword: string) => Promise<{ success: boolean; error?: string }>;
+  forgotPassword: (email: string) => Promise<{ success: boolean; error?: string }>;
+  resetPasswordWithSecurity: (
+    email: string,
+    securityAnswer: string,
+    newPassword: string
+  ) => Promise<{ success: boolean; error?: string }>;
   deleteUser: (userId: string) => Promise<{ success: boolean; error?: string }>;
   signOut: () => void;
   refreshUsers: () => Promise<UserProfile[]>;
+  promoteToAdmin: (userId: string, newRole: "admin" | "student") => Promise<boolean>;
 }
 
 const UserContext = createContext<UserContextValue | undefined>(undefined);
@@ -85,8 +95,6 @@ export function UserProvider({ children }: { children: ReactNode }) {
               window.localStorage.setItem(ADMIN_ORIGINAL_KEY, restored.id);
             }
           }
-        } else {
-          setCurrentUser(null);
         }
       }
       setLoading(false);
@@ -94,7 +102,6 @@ export function UserProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const selectUser = (user: UserProfile) => {
-    // Agar current user admin hai aur dusre me ja raha hai toh admin ko save rakho
     if ((currentUser?.role === "admin" || currentUser?.email === SUPER_ADMIN_EMAIL) && !adminUser) {
       setAdminUser(currentUser);
       if (typeof window !== "undefined") {
@@ -119,23 +126,39 @@ export function UserProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const addUser = async (
+  const loginOrRegister = async (
     name: string,
     email: string,
-    assignedRole?: "admin" | "student"
+    password?: string,
+    securityQuestion?: string,
+    securityAnswer?: string
   ): Promise<{ success: boolean; error?: string }> => {
     const cleanEmail = email.trim().toLowerCase();
     const cleanName = name.trim();
-    const role = cleanEmail === SUPER_ADMIN_EMAIL ? "admin" : assignedRole || "student";
+    const role = cleanEmail === SUPER_ADMIN_EMAIL ? "admin" : "student";
 
     try {
-      const { data: existingUser, error: fetchErr } = await supabase
+      if (password) {
+        const { error: authErr } = await supabase.auth.signInWithPassword({
+          email: cleanEmail,
+          password,
+        });
+
+        if (authErr) {
+          const { error: signUpErr } = await supabase.auth.signUp({
+            email: cleanEmail,
+            password,
+          });
+
+          if (signUpErr) return { success: false, error: signUpErr.message };
+        }
+      }
+
+      const { data: existingUser } = await supabase
         .from("users")
         .select("*")
         .eq("email", cleanEmail)
         .maybeSingle();
-
-      if (fetchErr) return { success: false, error: fetchErr.message };
 
       if (existingUser) {
         if (cleanEmail === SUPER_ADMIN_EMAIL && existingUser.role !== "admin") {
@@ -147,23 +170,74 @@ export function UserProvider({ children }: { children: ReactNode }) {
         return { success: true };
       }
 
-      const { data, error: insertErr } = await supabase
+      const insertData: any = {
+        name: cleanName,
+        email: cleanEmail,
+        role,
+      };
+
+      if (role === "student") {
+        insertData.security_question = securityQuestion || "Aapke favourite teacher ka naam kya hai?";
+        insertData.security_answer = securityAnswer || "";
+      }
+
+      const { data: newUserData, error: insertErr } = await supabase
         .from("users")
-        .insert([{ name: cleanName, email: cleanEmail, role }])
+        .insert([insertData])
         .select()
         .single();
 
       if (insertErr) return { success: false, error: insertErr.message };
 
-      if (data) {
+      if (newUserData) {
         await refreshUsers();
-        selectUser(data as UserProfile);
+        selectUser(newUserData as UserProfile);
         return { success: true };
       }
 
-      return { success: false, error: "Failed to create user." };
+      return { success: false, error: "Failed to create user profile." };
     } catch (err: any) {
-      return { success: false, error: err.message || "Network error" };
+      return { success: false, error: err.message || "Authentication error" };
+    }
+  };
+
+  const updatePassword = async (newPassword: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message || "Failed to update password" };
+    }
+  };
+
+  const forgotPassword = async (email: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
+        redirectTo: `${window.location.origin}/admin/reset-password`,
+      });
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message || "Failed to send reset link" };
+    }
+  };
+
+  const resetPasswordWithSecurity = async (
+    email: string,
+    securityAnswer: string,
+    newPassword: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const res = await fetch("/api/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, securityAnswer, newPassword }),
+      });
+      const data = await res.json();
+      return data;
+    } catch (err: any) {
+      return { success: false, error: err.message || "Failed to reset password" };
     }
   };
 
@@ -181,12 +255,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
       const { error } = await supabase.from("users").delete().eq("id", userId);
       if (error) return { success: false, error: error.message };
 
-      if (typeof window !== "undefined") {
-        window.localStorage.removeItem(ACTIVE_USER_KEY);
-        window.localStorage.removeItem(ADMIN_ORIGINAL_KEY);
-      }
-      setCurrentUser(null);
-      setAdminUser(null);
+      signOut();
       await refreshUsers();
       return { success: true };
     } catch (err: any) {
@@ -197,6 +266,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
   const signOut = () => {
     setCurrentUser(null);
     setAdminUser(null);
+    supabase.auth.signOut();
     if (typeof window !== "undefined") {
       window.localStorage.removeItem(ACTIVE_USER_KEY);
       window.localStorage.removeItem(ADMIN_ORIGINAL_KEY);
@@ -221,11 +291,14 @@ export function UserProvider({ children }: { children: ReactNode }) {
         isImpersonating,
         selectUser,
         switchBackToAdmin,
-        addUser,
-        promoteToAdmin,
+        loginOrRegister,
+        updatePassword,
+        forgotPassword,
+        resetPasswordWithSecurity,
         deleteUser,
         signOut,
         refreshUsers,
+        promoteToAdmin,
       }}
     >
       {children}
