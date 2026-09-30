@@ -16,6 +16,7 @@ const NAV_ITEMS = [
   { label: "Formula Vault", href: "/formula-vault" },
   { label: "Subject Weightage", href: "/subject-weightage" },
   { label: "Mock Test Performance", href: "/analytics" },
+  { label: "🔒 Security & Password", href: "/security" }, // <--- Yeh naya option add kar diya gaya hai
 ];
 
 export default function Sidebar() {
