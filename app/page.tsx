@@ -17,8 +17,6 @@ export default function DashboardPage() {
   const { currentUser, loginOrRegister, forgotPassword, resetPasswordWithSecurity, signOut } = useUser() as any;
 
   const [authRole, setAuthRole] = useState<"student" | "admin">("student");
-  
-  // Student ke andar mode: "login" ya "register"
   const [studentMode, setStudentMode] = useState<"login" | "register">("login");
 
   const [name, setName] = useState("");
@@ -143,7 +141,6 @@ export default function DashboardPage() {
             </p>
           </div>
 
-          {/* Main Role Switcher */}
           {!isForgotMode && (
             <div className="grid grid-cols-2 gap-1 p-1 bg-slate-950 rounded-xl border border-slate-800">
               <button
@@ -174,7 +171,6 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* Student Sub-Mode Switcher (Login vs New User Register) */}
           {!isForgotMode && authRole === "student" && (
             <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
               <button
@@ -206,7 +202,6 @@ export default function DashboardPage() {
 
           {!isForgotMode ? (
             <form onSubmit={handleUserEntry} className="space-y-4">
-              {/* Name field only for New User or Admin */}
               {(authRole === "admin" || studentMode === "register") && (
                 <div>
                   <label className="block text-xs font-medium text-slate-300 mb-1">
@@ -264,7 +259,6 @@ export default function DashboardPage() {
                 />
               </div>
 
-              {/* Security Questions visible ONLY for New User Registration */}
               {authRole === "student" && studentMode === "register" && (
                 <div className="space-y-3 pt-2 border-t border-slate-800">
                   <p className="text-[11px] text-emerald-400 font-medium">
@@ -323,7 +317,6 @@ export default function DashboardPage() {
               </button>
             </form>
           ) : (
-            /* Forgot Password Flow */
             <div>
               {!fetchedQuestion ? (
                 <form onSubmit={handleFetchQuestion} className="space-y-4">

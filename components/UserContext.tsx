@@ -1,4 +1,3 @@
-"use exact client";
 "use client";
 
 import {
