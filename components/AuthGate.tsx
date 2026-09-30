@@ -4,9 +4,10 @@ import { useState } from "react";
 import { useUser } from "@/components/UserContext";
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
-  const { currentUser, users, loading, addUser, selectUser } = useUser();
+  const { currentUser, users, loading, loginOrRegister, selectUser } = useUser();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
@@ -26,18 +27,18 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     return <>{children}</>;
   }
 
-  // New user create karne ka logic
+  // New user create / login karne ka logic
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg("");
 
-    if (!name.trim() || !email.trim()) {
-      setErrorMsg("Please fill out both Name and Email.");
+    if (!name.trim() || !email.trim() || !password) {
+      setErrorMsg("Please fill out Name, Email, and Password.");
       return;
     }
 
     setIsSubmitting(true);
-    const result = await addUser(name, email);
+    const result = await loginOrRegister(name.trim(), email.trim(), password);
     setIsSubmitting(false);
 
     if (!result.success) {
@@ -85,7 +86,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
                 <button
                   key={u.id}
                   onClick={() => selectUser(u)}
-                  className="w-full flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-left transition hover:border-indigo-500/50 hover:bg-slate-800/60 group"
+                  className="w-full flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-left transition hover:border-indigo-500/50 hover:bg-slate-800/60 group cursor-pointer"
                 >
                   <div className="overflow-hidden pr-2">
                     <p className="truncate text-sm font-medium text-slate-200 group-hover:text-indigo-400 transition-colors">
@@ -149,10 +150,24 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
             />
           </div>
 
+          <div>
+            <label className="mb-1 block text-xs font-medium uppercase tracking-wider text-slate-400">
+              Password
+            </label>
+            <input
+              type="password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+              className="w-full rounded-lg border border-slate-800 bg-slate-950 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-600 outline-none transition focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+            />
+          </div>
+
           <button
             type="submit"
             disabled={isSubmitting}
-            className="w-full rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg transition hover:bg-indigo-500 disabled:opacity-50"
+            className="w-full rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg transition hover:bg-indigo-500 disabled:opacity-50 cursor-pointer"
           >
             {isSubmitting ? "Setting up..." : "Get Started"}
           </button>
