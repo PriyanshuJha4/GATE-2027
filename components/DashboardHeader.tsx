@@ -36,12 +36,17 @@ export default function DashboardHeader() {
 
     if (!error && data) {
       setCompletedCount(data.length);
+    } else {
+      setCompletedCount(0);
     }
   }, [currentUser]);
 
   // Mock tests data laane ka function
   const fetchMockTests = useCallback(async () => {
-    if (!currentUser) return;
+    if (!currentUser) {
+      setMockTests([]);
+      return;
+    }
 
     const { data: tests } = await supabase
       .from("mock_tests")
@@ -49,15 +54,14 @@ export default function DashboardHeader() {
       .eq("user_id", currentUser.id)
       .order("test_date", { ascending: false });
 
-    if (tests) setMockTests(tests as MockTest[]);
+    setMockTests((tests as MockTest[]) || []);
   }, [currentUser]);
 
   useEffect(() => {
     fetchSyllabusProgress();
     fetchMockTests();
 
-    // Jab user syllabus page par tick lagakar wapas dashboard par switch kare,
-    // toh data window focus hote hi automatic refresh ho jaye
+    // Focus hone par auto refresh
     const handleFocus = () => {
       fetchSyllabusProgress();
       fetchMockTests();
