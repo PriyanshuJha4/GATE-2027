@@ -12,22 +12,19 @@ export default function AdminResetPasswordPage() {
   const router = useRouter();
 
   useEffect(() => {
-    // 1. URL hash ya session change ko detect karne ke liye auth state listener lagayein
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === "PASSWORD_RECOVERY" || session) {
         setIsReady(true);
       }
     });
 
-    // 2. Initial session check karein
     const checkSession = async () => {
       const { data, error } = await supabase.auth.getSession();
       if (error || !data.session) {
-        // Thoda wait karte hain kyuki hash parameters ko parse hone mein waqt lag sakta hai
         setTimeout(async () => {
           const { data: retryData } = await supabase.auth.getSession();
           if (!retryData.session) {
-            setErrorMsg("Recovery link invalid ya expired ho chuka hai. Kripya dobara request bhejein.");
+            setErrorMsg("Recovery link invalid ya expired ho chuka hai.");
           } else {
             setIsReady(true);
           }
@@ -57,12 +54,16 @@ export default function AdminResetPasswordPage() {
     setErrorMsg(null);
 
     const { error } = await supabase.auth.updateUser({ password });
-    setLoading(false);
-
+    
     if (error) {
+      setLoading(false);
       setErrorMsg(error.message);
     } else {
-      alert("Password successfully update ho gaya! Ab aap login kar sakte hain.");
+      // पासवर्ड अपडेट होने के बाद तुरंत साइन-आउट कर दें ताकि यूजर सीधे कंट्रोल पैनल में न घुसे, बल्कि लॉगिन करे
+      await supabase.auth.signOut();
+      setLoading(false);
+      
+      alert("Password successfully update ho gaya! Ab naye password se login karein.");
       router.push("/admin/login");
     }
   };
