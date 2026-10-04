@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { getTable, saveCards, fileUrl, localState, type LocalState } from "@/lib/sync/client";
+import { getTable, saveCards, saveTable, fileUrl, localState, type LocalState } from "@/lib/sync/client";
 import { reviewCard, localDate, type Rating } from "@/lib/sync/core";
 
 type Tab = "cards" | "errors" | "pdfs";
@@ -164,12 +164,19 @@ function Errors() {
 }
 
 function Pdfs() {
+  const [cols, setCols] = useState<string[]>([]);
   const [rows, setRows] = useState<any[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [msg, setMsg] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
-  useEffect(() => { getTable("pdfs").then((t) => { setRows(t.rows); setLoaded(true); }); }, []);
+  useEffect(() => { 
+    getTable("pdfs").then((t) => { 
+      setCols(t.columns); 
+      setRows(t.rows); 
+      setLoaded(true); 
+    }); 
+  }, []);
 
   const grouped = useMemo(() => {
     const m = new Map<string, any[]>();
@@ -188,17 +195,26 @@ function Pdfs() {
   const deletePdf = async (id: string) => {
     if (!window.confirm("Kya aap is PDF ko local library se delete karna chahte hain?")) return;
     const next = rows.filter((r) => r.id !== id);
-    setRows(next);
-    setSelectedIds((prev) => { const n = new Set(prev); n.delete(id); return n; });
-    // Note: Local table update ke liye agar save helper ki zaroorat ho toh yahan call kar sakte hain agar client mein available ho.
+    try {
+      await saveTable("pdfs", cols, next);
+      setRows(next);
+      setSelectedIds((prev) => { const n = new Set(prev); n.delete(id); return n; });
+    } catch (e: any) {
+      setMsg(`Delete fail ho gaya: ${e?.message || e}`);
+    }
   };
 
-  const deleteSelectedPdfs = () => {
+  const deleteSelectedPdfs = async () => {
     if (selectedIds.size === 0) return;
     if (!window.confirm(`Selected (${selectedIds.size}) PDFs delete karna chahte hain?`)) return;
     const next = rows.filter((r) => !selectedIds.has(r.id));
-    setRows(next);
-    setSelectedIds(new Set());
+    try {
+      await saveTable("pdfs", cols, next);
+      setRows(next);
+      setSelectedIds(new Set());
+    } catch (e: any) {
+      setMsg(`Bulk delete fail ho gaya: ${e?.message || e}`);
+    }
   };
 
   const toggleSelect = (id: string) => {
