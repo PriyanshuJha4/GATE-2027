@@ -16,6 +16,8 @@ const NAV_ITEMS = [
   { label: "Formula Vault", href: "/formula-vault" },
   { label: "Subject Weightage", href: "/subject-weightage" },
   { label: "Mock Test Performance", href: "/analytics" },
+  { label: "📱 Offline Library (phone)", href: "/offline", hard: true },
+  { label: "☁️ Cloud Sync", href: "/sync", hard: true },
 ];
 
 export default function Sidebar() {
@@ -152,16 +154,26 @@ export default function Sidebar() {
               </Link>
             )}
 
-            {NAV_ITEMS.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                onClick={() => setOpen(false)}
-                className="block px-3.5 py-2.5 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-100 hover:text-brand transition-colors"
-              >
-                {item.label}
-              </Link>
-            ))}
+            {NAV_ITEMS.map((item) =>
+              (item as { hard?: boolean }).hard ? (
+                <a
+                  key={item.href}
+                  href={item.href}
+                  className="block px-3.5 py-2.5 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-100 hover:text-brand transition-colors"
+                >
+                  {item.label}
+                </a>
+              ) : (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={() => setOpen(false)}
+                  className="block px-3.5 py-2.5 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-100 hover:text-brand transition-colors"
+                >
+                  {item.label}
+                </Link>
+              ),
+            )}
           </nav>
         </div>
 
