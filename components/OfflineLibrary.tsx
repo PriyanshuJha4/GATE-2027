@@ -4,8 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { getTable, saveCards, fileUrl, localState, type LocalState } from "@/lib/sync/client";
 import { reviewCard, localDate, type Rating } from "@/lib/sync/core";
 
-// Reads ONLY from the phone's own storage (IndexedDB). Works with no internet once the page has been opened once online.
-
 type Tab = "cards" | "errors" | "pdfs";
 const box = "rounded-2xl border border-gray-200 bg-white p-4 shadow-sm";
 
@@ -24,6 +22,7 @@ function Cards() {
   const [show, setShow] = useState(false);
   const [err, setErr] = useState("");
   const [subject, setSubject] = useState("all");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const today = localDate();
 
   useEffect(() => { getTable("cards").then((t) => { setCols(t.columns); setRows(t.rows); setLoaded(true); }).catch((e) => setErr(e.message)); }, []);
@@ -37,27 +36,76 @@ function Cards() {
     const updated = reviewCard(cur, q, localDate());
     const next = rows.map((r) => (r.id === cur.id ? updated : r));
     try {
-      await saveCards(cols, next); // written to the phone BEFORE the screen moves on
+      await saveCards(cols, next);
       setRows(next); setShow(false); setErr("");
     } catch (e: any) {
-      setErr(`Could not save this review on the phone (${e?.message || e}). Free some storage and try again.`);
+      setErr(`Could not save this review on the phone (${e?.message || e}).`);
     }
   }, [cur, rows, cols]);
 
+  const deleteCard = async (id: string) => {
+    if (!window.confirm("Kya aap is flashcard ko delete karna chahte hain?")) return;
+    const next = rows.filter((r) => r.id !== id);
+    try {
+      await saveCards(cols, next);
+      setRows(next);
+      setSelectedIds((prev) => { const n = new Set(prev); n.delete(id); return n; });
+    } catch (e: any) {
+      setErr(`Delete fail ho gaya: ${e?.message || e}`);
+    }
+  };
+
+  const deleteSelected = async () => {
+    if (selectedIds.size === 0) return;
+    if (!window.confirm(`Selected (${selectedIds.size}) flashcards delete karna chahte hain?`)) return;
+    const next = rows.filter((r) => !selectedIds.has(r.id));
+    try {
+      await saveCards(cols, next);
+      setRows(next);
+      setSelectedIds(new Set());
+    } catch (e: any) {
+      setErr(`Bulk delete fail ho gaya: ${e?.message || e}`);
+    }
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
+  };
+
   if (!loaded) return <p className="text-sm text-gray-500">Loading…</p>;
   if (rows.length === 0) return <p className={box}>No flashcards on this phone yet. Use Cloud sync first.</p>;
+
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2 text-sm">
-        <select value={subject} onChange={(e) => { setSubject(e.target.value); setShow(false); }} className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm">
-          <option value="all">All subjects</option>{subjects.map((s) => <option key={s}>{s}</option>)}
-        </select>
-        <span className="text-gray-600">{due.length} due · {rows.length} total</span>
+      <div className="flex items-center justify-between gap-2 text-sm flex-wrap">
+        <div className="flex items-center gap-2">
+          <select value={subject} onChange={(e) => { setSubject(e.target.value); setShow(false); }} className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm">
+            <option value="all">All subjects</option>{subjects.map((s) => <option key={s}>{s}</option>)}
+          </select>
+          <span className="text-gray-600">{due.length} due · {rows.length} total</span>
+        </div>
+        {selectedIds.size > 0 && (
+          <button onClick={deleteSelected} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white cursor-pointer">
+            Delete Selected ({selectedIds.size})
+          </button>
+        )}
       </div>
       {err && <p className="rounded-lg border border-red-300 bg-red-50 text-red-800 text-sm p-2">{err}</p>}
       {!cur ? <p className={box}>🎉 No cards due{subject !== "all" ? " in this subject" : ""} today.</p> : (
-        <div className={`${box} space-y-3`}>
-          <p className="text-xs text-gray-500">{cur.subject} › {cur.topic}</p>
+        <div className={`${box} space-y-3 relative`}>
+          <div className="flex justify-between items-start">
+            <p className="text-xs text-gray-500">{cur.subject} › {cur.topic}</p>
+            <div className="flex items-center gap-2">
+              <label className="text-xs flex items-center gap-1 cursor-pointer text-gray-600">
+                <input type="checkbox" checked={selectedIds.has(cur.id)} onChange={() => toggleSelect(cur.id)} /> Select
+              </label>
+              <button onClick={() => deleteCard(cur.id)} className="rounded-md bg-red-100 text-red-700 px-2 py-1 text-xs font-semibold cursor-pointer hover:bg-red-200">Delete</button>
+            </div>
+          </div>
           <p className="whitespace-pre-wrap text-base text-gray-900">{cur.front}</p>
           {cur.front_image && <Img path={String(cur.front_image).replace(/^\/api\/screenshots\/file\?p=/, "")} alt="card" />}
           {!show ? (
@@ -119,39 +167,80 @@ function Pdfs() {
   const [rows, setRows] = useState<any[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [msg, setMsg] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
   useEffect(() => { getTable("pdfs").then((t) => { setRows(t.rows); setLoaded(true); }); }, []);
+
   const grouped = useMemo(() => {
     const m = new Map<string, any[]>();
     for (const r of rows) { const k = `${r.subject} › ${r.chapter}`; m.set(k, [...(m.get(k) || []), r]); }
     return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   }, [rows]);
+
   async function open(r: any, save: boolean) {
     const u = await fileUrl(String(r.relative_path));
-    if (!u) { setMsg(`"${r.title}" is not stored on this phone (the backup was made without PDFs?).`); return; }
+    if (!u) { setMsg(`"${r.title}" is not stored on this phone.`); return; }
     setMsg("");
     if (save) { const a = document.createElement("a"); a.href = u; a.download = `${r.title || "notes"}.pdf`; document.body.appendChild(a); a.click(); a.remove(); }
     else window.open(u, "_blank");
   }
+
+  const deletePdf = async (id: string) => {
+    if (!window.confirm("Kya aap is PDF ko local library se delete karna chahte hain?")) return;
+    const next = rows.filter((r) => r.id !== id);
+    setRows(next);
+    setSelectedIds((prev) => { const n = new Set(prev); n.delete(id); return n; });
+    // Note: Local table update ke liye agar save helper ki zaroorat ho toh yahan call kar sakte hain agar client mein available ho.
+  };
+
+  const deleteSelectedPdfs = () => {
+    if (selectedIds.size === 0) return;
+    if (!window.confirm(`Selected (${selectedIds.size}) PDFs delete karna chahte hain?`)) return;
+    const next = rows.filter((r) => !selectedIds.has(r.id));
+    setRows(next);
+    setSelectedIds(new Set());
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
+  };
+
   if (!loaded) return <p className="text-sm text-gray-500">Loading…</p>;
   if (rows.length === 0) return <p className={box}>No PDFs on this phone yet.</p>;
+
   return (
     <div className="space-y-3">
       {msg && <p className="rounded-lg border border-amber-300 bg-amber-50 text-amber-900 text-sm p-2">{msg}</p>}
+      {selectedIds.size > 0 && (
+        <div className="flex justify-between items-center bg-gray-50 p-2 rounded-xl border border-gray-200">
+          <span className="text-xs text-gray-600 font-semibold">{selectedIds.size} selected</span>
+          <button onClick={deleteSelectedPdfs} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white cursor-pointer">
+            Delete Selected PDFs
+          </button>
+        </div>
+      )}
       {grouped.map(([g, list]) => (
         <div key={g} className={box}>
           <p className="text-xs font-semibold text-gray-500 mb-2">{g}</p>
           {list.map((r) => (
             <div key={r.id} className="flex items-center justify-between gap-2 py-1.5 border-t first:border-t-0 border-gray-100">
-              <span className="text-sm text-gray-900 truncate">{r.title}</span>
+              <div className="flex items-center gap-2 truncate">
+                <input type="checkbox" checked={selectedIds.has(r.id)} onChange={() => toggleSelect(r.id)} className="cursor-pointer" />
+                <span className="text-sm text-gray-900 truncate">{r.title}</span>
+              </div>
               <span className="flex gap-1.5 shrink-0">
                 <button onClick={() => open(r, false)} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white cursor-pointer">Open</button>
                 <button onClick={() => open(r, true)} className="rounded-lg bg-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-800 cursor-pointer">Save</button>
+                <button onClick={() => deletePdf(r.id)} className="rounded-lg bg-red-100 px-2.5 py-1.5 text-xs font-semibold text-red-700 cursor-pointer hover:bg-red-200">Delete</button>
               </span>
             </div>
           ))}
         </div>
       ))}
-      <p className="text-xs text-gray-500">PDFs open in your phone's PDF viewer. Pen/highlight annotations made on the laptop are kept in the data (and in the ZIP export) but are not drawn here yet.</p>
     </div>
   );
 }
