@@ -185,6 +185,10 @@ export async function saveCards(columns: string[], rows: any[]) {
   await idbPut("meta", "dirty", true); // there are phone-side reviews that the laptop does not have yet
 }
 
+export async function saveTable(name: string, columns: string[], rows: any[]) {
+  await idbPut("tables", name, { columns, rows });
+}
+
 const urlCache = new Map<string, string>();
 /** Object URL for a stored file (PDF / screenshot), or null if it is not on this phone. */
 export async function fileUrl(path: string): Promise<string | null> {
